@@ -65,7 +65,7 @@ fun ChatScreen(
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
                 },
                 actions = {
-                    IconButton(onClick = onOpenTerminal) { Icon(Icons.Default.Term, "Terminal") }
+                    IconButton(onClick = onOpenTerminal) { Icon(Icons.Default.Code, "Terminal") }
                 }
             )
         }

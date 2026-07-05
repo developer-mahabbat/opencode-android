@@ -152,7 +152,7 @@ private fun getFileIcon(name: String) = when {
     name.endsWith(".json") || name.endsWith(".xml") -> Icons.Default.DataObject
     name.endsWith(".md") -> Icons.Default.Description
     name.endsWith(".gradle") || name.endsWith(".gradle.kts") -> Icons.Default.Build
-    else -> Icons.Default.InsertDriveOutline
+    else -> Icons.Default.InsertDriveFile
 }
 
 private fun getRealPathFromUri(context: android.content.Context, uri: Uri): String {
