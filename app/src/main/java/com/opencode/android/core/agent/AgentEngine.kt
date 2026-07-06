@@ -1,6 +1,7 @@
 package com.opencode.android.core.agent
 
 import com.opencode.android.core.config.ConfigManager
+import com.opencode.android.core.config.ProviderConfig
 import com.opencode.android.core.provider.*
 import com.opencode.android.core.session.*
 import com.opencode.android.core.tool.*
@@ -205,6 +206,7 @@ class AgentEngine(
                             sessionManager.addMessage(sessionId, "assistant", assistantContent,
                                 toolCalls = toolCallsList.map { ToolCallData(it.id, it.name, it.arguments) })
 
+                            val toolResults = mutableListOf<String>()
                             for (tc in toolCallsList) {
                                 _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
                                 val tool = toolRegistry.get(tc.name)
@@ -214,19 +216,11 @@ class AgentEngine(
                                         tool.execute(args, session.workspacePath)
                                     } catch (e: Exception) { "Error: ${e.message}" }
                                 } else { "Error: Unknown tool: ${tc.name}" }
+                                toolResults.add("${tc.name}: $result")
                                 _toolEvents.emit(ToolEvent.Completed(tc.name, result))
                             }
 
-                            val resultsText = toolCallsList.joinToString("\n\n") { tc ->
-                                "${tc.name}: ${toolRegistry.get(tc.name)?.let {
-                                    try {
-                                        val args = Json.parseToJsonElement(tc.arguments).jsonObject
-                                        it.execute(args, session.workspacePath)
-                                    } catch (e: Exception) { "Error: ${e.message}" }
-                                } ?: "Unknown tool"}"
-                            }
-
-                            sessionManager.addMessage(sessionId, "tool", resultsText)
+                            sessionManager.addMessage(sessionId, "tool", toolResults.joinToString("\n\n"))
                             conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
                             _activeTools.value = emptyList()
                             continue

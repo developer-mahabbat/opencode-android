@@ -148,7 +148,7 @@ fun FileNodeItem(
             }
             Spacer(Modifier.width(8.dp))
             Text(node.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            if (node.isFile) {
+            if (!node.isDirectory) {
                 Text(
                     formatSize(node.size),
                     style = MaterialTheme.typography.bodySmall,
