@@ -11,11 +11,23 @@ import kotlinx.serialization.json.Json
 
 @Serializable
 data class AppConfig(
-    val defaultProvider: String = "openai",
-    val defaultModel: String = "gpt-4o",
+    val defaultProvider: String = "zen",
+    val defaultModel: String = "deepseek-v4-flash-free",
     val workspacePath: String = "",
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
-    val providers: Map<String, ProviderConfig> = emptyMap()
+    val providers: Map<String, ProviderConfig> = emptyMap(),
+    val activeAgent: String = "build",
+    val themeMode: String = "system",
+    val fontSize: Int = 14,
+    val tabSize: Int = 4,
+    val wordWrap: Boolean = false,
+    val showLineNumbers: Boolean = true,
+    val autoSave: Boolean = true,
+    val webSearchEnabled: Boolean = true,
+    val maxTokens: Int = 8192,
+    val temperature: Double = 0.7,
+    val enableSubAgents: Boolean = true,
+    val enableThinking: Boolean = true,
 )
 
 @Serializable
@@ -24,33 +36,43 @@ data class ProviderConfig(
     val name: String,
     val apiKey: String = "",
     val baseUrl: String = "",
-    val defaultModel: String = "gpt-4o",
-    val enabled: Boolean = true
+    val defaultModel: String = "",
+    val enabled: Boolean = true,
+    val headers: Map<String, String> = emptyMap(),
 )
 
-const val DEFAULT_SYSTEM_PROMPT = """You are OpenCode, an expert AI coding assistant running on Android.
-
-You have direct access to the user's project files and can read, write, edit, create, delete, and rename files and folders.
+const val DEFAULT_SYSTEM_PROMPT = """You are OpenCode, an expert AI coding assistant running natively on Android.
 
 CAPABILITIES:
-- Read and analyze source code in any language
-- Write new files and modify existing ones
-- Search through entire codebases
+- Read, write, edit, create, delete files and folders
 - Execute shell commands
-- Manage git repositories
+- Search codebases with regex and glob patterns
+- Web search for documentation and references
+- Analyze project structure and dependencies
 - Generate diffs and patches
-- Understand project structure and dependencies
+- Manage git repositories
 
 BEHAVIOR:
-- Be concise and direct
+- Be concise, direct, and actionable
 - Show code changes when editing files
-- Explain what you're doing before making changes
-- Ask for confirmation before destructive operations
 - Use tools to interact with the filesystem
-- Think step by step for complex tasks"""
+- Think step by step for complex tasks
+- Break large tasks into smaller manageable steps
+- Explain your reasoning before making changes"""
+
+const val PLAN_SYSTEM_PROMPT = """You are OpenCode Plan, a read-only analysis assistant.
+
+You can read files, search codebases, and analyze projects, but you CANNOT modify anything.
+
+Your job is to:
+- Analyze code and provide recommendations
+- Create implementation plans in .opencode/plans/*.md files
+- Review code for bugs, security issues, and improvements
+- Explain complex code architectures
+- Suggest refactoring strategies"""
 
 class ConfigManager(context: Context) {
-    private val prefs = context.getSharedPreferences("opencode_prefs", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("opencode_config", Context.MODE_PRIVATE)
     private val _config = MutableStateFlow(load())
     val config: StateFlow<AppConfig> = _config.asStateFlow()
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; isLenient = true }
@@ -68,4 +90,21 @@ class ConfigManager(context: Context) {
     }
 
     fun getProvider(id: String): ProviderConfig? = _config.value.providers[id]
+
+    fun getAvailableModels(): List<ModelInfo> = listOf(
+        ModelInfo("deepseek-v4-flash-free", "DeepSeek V4 Flash", "Free", "Fast & capable", listOf("chat", "code", "reasoning")),
+        ModelInfo("mimo-v2.5-free", "MiMo V2.5", "Free", "Advanced reasoning", listOf("chat", "code", "reasoning", "math")),
+        ModelInfo("north-mini-code-free", "North Mini Code", "Free", "Code specialist", listOf("code", "autocomplete")),
+        ModelInfo("nemotron-3-ultra-free", "Nemotron 3 Ultra", "Free", "Ultra performance", listOf("chat", "code", "reasoning")),
+        ModelInfo("big-pickle", "Big Pickle", "Free", "Maximum capability", listOf("chat", "code", "reasoning", "math", "creative")),
+    )
 }
+
+@Serializable
+data class ModelInfo(
+    val id: String,
+    val name: String,
+    val tier: String,
+    val description: String,
+    val capabilities: List<String>,
+)

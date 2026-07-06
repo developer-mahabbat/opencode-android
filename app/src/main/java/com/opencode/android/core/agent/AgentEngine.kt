@@ -4,13 +4,106 @@ import com.opencode.android.core.config.ConfigManager
 import com.opencode.android.core.provider.*
 import com.opencode.android.core.session.*
 import com.opencode.android.core.tool.*
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
 import java.util.UUID
 
+enum class AgentMode { PRIMARY, SUBAGENT, HIDDEN }
+
+data class AgentDefinition(
+    val id: String,
+    val name: String,
+    val description: String,
+    val mode: AgentMode,
+    val systemPrompt: String,
+    val allowedTools: Set<String> = emptySet(),
+    val deniedTools: Set<String> = emptySet(),
+    val temperature: Double = 0.7,
+    val maxSteps: Int = 20,
+    val color: String = "#90CAF9",
+)
+
+object AgentRegistry {
+    val agents = mapOf(
+        "build" to AgentDefinition(
+            id = "build",
+            name = "Build",
+            description = "Full access agent with all tools",
+            mode = AgentMode.PRIMARY,
+            systemPrompt = com.opencode.android.core.config.DEFAULT_SYSTEM_PROMPT,
+            color = "#90CAF9",
+        ),
+        "plan" to AgentDefinition(
+            id = "plan",
+            name = "Plan",
+            description = "Read-only analysis and planning",
+            mode = AgentMode.PRIMARY,
+            systemPrompt = com.opencode.android.core.config.PLAN_SYSTEM_PROMPT,
+            deniedTools = setOf("write_file", "edit_file", "create_file", "delete_file", "rename_file", "create_folder", "delete_folder", "shell_exec"),
+            color = "#A5D6A7",
+        ),
+        "coder" to AgentDefinition(
+            id = "coder",
+            name = "Coder",
+            description = "Code specialist with deep analysis",
+            mode = AgentMode.PRIMARY,
+            systemPrompt = "You are an expert coder. Focus on writing clean, efficient, well-documented code. Always explain your approach before implementing.",
+            color = "#CE93D8",
+        ),
+        "researcher" to AgentDefinition(
+            id = "researcher",
+            name = "Researcher",
+            description = "Web search and documentation specialist",
+            mode = AgentMode.PRIMARY,
+            systemPrompt = "You are a research specialist. Use web search to find documentation, examples, and best practices. Always cite your sources.",
+            color = "#FFB74D",
+        ),
+        "general" to AgentDefinition(
+            id = "general",
+            name = "General",
+            description = "General-purpose sub-agent",
+            mode = AgentMode.SUBAGENT,
+            systemPrompt = "You are a helpful assistant. Complete the given task using available tools.",
+            color = "#80CBC4",
+        ),
+        "explore" to AgentDefinition(
+            id = "explore",
+            name = "Explore",
+            description = "Fast codebase exploration",
+            mode = AgentMode.SUBAGENT,
+            systemPrompt = "You are a fast codebase explorer. Quickly find and report relevant files and code. Be concise.",
+            deniedTools = setOf("write_file", "edit_file", "create_file", "delete_file", "rename_file", "create_folder", "delete_folder", "shell_exec"),
+            color = "#F48FB1",
+        ),
+        "reviewer" to AgentDefinition(
+            id = "reviewer",
+            name = "Reviewer",
+            description = "Code review specialist",
+            mode = AgentMode.SUBAGENT,
+            systemPrompt = "You are a code reviewer. Analyze code for bugs, security issues, performance problems, and style violations. Be specific about line numbers and provide fix suggestions.",
+            deniedTools = setOf("write_file", "edit_file", "create_file", "delete_file", "rename_file", "create_folder", "delete_folder", "shell_exec"),
+            color = "#EF9A9A",
+        ),
+        "title" to AgentDefinition(
+            id = "title",
+            name = "Title",
+            description = "Session title generator",
+            mode = AgentMode.HIDDEN,
+            systemPrompt = "Generate a short, descriptive title (max 50 chars) for this conversation. Only output the title, nothing else.",
+            temperature = 0.5,
+            color = "#B0BEC5",
+        ),
+    )
+
+    fun getAgent(id: String): AgentDefinition = agents[id] ?: agents["build"]!!
+    fun getPrimaryAgents(): List<AgentDefinition> = agents.values.filter { it.mode == AgentMode.PRIMARY }
+    fun getSubAgents(): List<AgentDefinition> = agents.values.filter { it.mode == AgentMode.SUBAGENT }
+}
+
 class AgentEngine(
     private val sessionManager: SessionManager,
-    private val configManager: ConfigManager
+    private val configManager: ConfigManager,
 ) {
     private val llmClient = LLMClient()
     private val toolRegistry = ToolRegistry().apply {
@@ -29,6 +122,8 @@ class AgentEngine(
         register(GitStatusTool())
         register(GitDiffTool())
         register(GitLogTool())
+        register(WebSearchTool())
+        register(WebFetchTool())
     }
 
     private val _isProcessing = MutableStateFlow(false)
@@ -37,65 +132,158 @@ class AgentEngine(
     private val _currentOutput = MutableStateFlow("")
     val currentOutput: StateFlow<String> = _currentOutput.asStateFlow()
 
+    private val _currentAgent = MutableStateFlow("build")
+    val currentAgent: StateFlow<String> = _currentAgent.asStateFlow()
+
     private val _toolEvents = MutableSharedFlow<ToolEvent>()
     val toolEvents: SharedFlow<ToolEvent> = _toolEvents
 
+    private val _activeTools = MutableStateFlow<List<String>>(emptyList())
+    val activeTools: StateFlow<List<String>> = _activeTools.asStateFlow()
+
+    private var job: Job? = null
+
+    fun switchAgent(agentId: String) {
+        _currentAgent.value = agentId
+    }
+
     suspend fun processMessage(sessionId: String, userMessage: String) {
-        val config = configManager.config.value
-        val provider = config.providers[config.defaultProvider] ?: return
-        val session = sessionManager.getSession(sessionId) ?: return
+        job = coroutineScope {
+            launch {
+                _isProcessing.value = true
+                _currentOutput.value = ""
+                _activeTools.value = emptyList()
 
-        _isProcessing.value = true
-        _currentOutput.value = ""
+                try {
+                    val config = configManager.config.value
+                    val provider = config.providers[config.defaultProvider]
+                        ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
+                    val session = sessionManager.getSession(sessionId) ?: return@launch
+                    val agentDef = AgentRegistry.getAgent(_currentAgent.value)
 
-        sessionManager.addMessage(sessionId, "user", userMessage)
+                    sessionManager.addMessage(sessionId, "user", userMessage)
 
-        var conversationHistory = buildConversationHistory(sessionId, config.systemPrompt)
+                    var conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
+                    var iterations = 0
 
-        var iterations = 0
-        val maxIterations = 20
+                    while (iterations < agentDef.maxSteps && _isProcessing.value) {
+                        iterations++
+                        val responseBuilder = StringBuilder()
+                        val toolCallsList = mutableListOf<PendingToolCall>()
 
-        while (iterations < maxIterations) {
-            iterations++
+                        llmClient.streamChat(
+                            provider = provider,
+                            messages = conversationHistory,
+                            model = config.defaultModel,
+                            maxTokens = config.maxTokens,
+                            temperature = agentDef.temperature,
+                        ).collect { event ->
+                            when (event) {
+                                is StreamEvent.Token -> {
+                                    responseBuilder.append(event.text)
+                                    _currentOutput.value = responseBuilder.toString()
+                                }
+                                is StreamEvent.ToolCall -> {
+                                    if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
+                                        if (event.name !in agentDef.deniedTools) {
+                                            toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
+                                            _activeTools.value = _activeTools.value + event.name
+                                        }
+                                    }
+                                }
+                                is StreamEvent.Error -> {
+                                    sessionManager.addMessage(sessionId, "assistant", "Error: ${event.message}")
+                                    _currentOutput.value = "Error: ${event.message}"
+                                }
+                                else -> {}
+                            }
+                        }
 
-            val responseBuilder = StringBuilder()
-            val toolCallsList = mutableListOf<ToolCallData>()
+                        val assistantContent = responseBuilder.toString()
 
-            llmClient.streamChat(provider, conversationHistory).collect { event ->
-                when (event) {
-                    is StreamEvent.Token -> {
-                        responseBuilder.append(event.text)
-                        _currentOutput.value = responseBuilder.toString()
+                        if (toolCallsList.isNotEmpty()) {
+                            sessionManager.addMessage(sessionId, "assistant", assistantContent,
+                                toolCalls = toolCallsList.map { ToolCallData(it.id, it.name, it.arguments) })
+
+                            for (tc in toolCallsList) {
+                                _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
+                                val tool = toolRegistry.get(tc.name)
+                                val result = if (tool != null) {
+                                    try {
+                                        val args = Json.parseToJsonElement(tc.arguments).jsonObject
+                                        tool.execute(args, session.workspacePath)
+                                    } catch (e: Exception) { "Error: ${e.message}" }
+                                } else { "Error: Unknown tool: ${tc.name}" }
+                                _toolEvents.emit(ToolEvent.Completed(tc.name, result))
+                            }
+
+                            val resultsText = toolCallsList.joinToString("\n\n") { tc ->
+                                "${tc.name}: ${toolRegistry.get(tc.name)?.let {
+                                    try {
+                                        val args = Json.parseToJsonElement(tc.arguments).jsonObject
+                                        it.execute(args, session.workspacePath)
+                                    } catch (e: Exception) { "Error: ${e.message}" }
+                                } ?: "Unknown tool"}"
+                            }
+
+                            sessionManager.addMessage(sessionId, "tool", resultsText)
+                            conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
+                            _activeTools.value = emptyList()
+                            continue
+                        }
+
+                        if (assistantContent.isNotBlank()) {
+                            sessionManager.addMessage(sessionId, "assistant", assistantContent)
+                        }
+                        _currentOutput.value = ""
+                        break
                     }
-                    is StreamEvent.Done -> {}
-                    is StreamEvent.Error -> {
-                        sessionManager.addMessage(sessionId, "assistant", "Error: ${event.message}")
-                        _currentOutput.value = "Error: ${event.message}"
+                } catch (e: Exception) {
+                    if (e !is CancellationException) {
+                        _currentOutput.value = "Error: ${e.message}"
                     }
-                    else -> {}
+                } finally {
+                    _isProcessing.value = false
+                    _activeTools.value = emptyList()
                 }
             }
+        }
+    }
 
-            val assistantContent = responseBuilder.toString()
+    suspend fun spawnSubAgent(
+        parentSessionId: String,
+        agentId: String,
+        task: String,
+        workspace: String,
+    ): String {
+        val agentDef = AgentRegistry.getAgent(agentId)
+        val childSessionId = sessionManager.createSession(
+            title = "Sub-agent: ${agentDef.name}",
+            workspacePath = workspace,
+            modelId = configManager.config.value.defaultModel,
+            providerId = configManager.config.value.defaultProvider,
+        ).id
 
-            if (assistantContent.contains("```json") && assistantContent.contains("\"tool_call\"")) {
-                val toolCalls = parseToolCalls(assistantContent)
-                if (toolCalls.isNotEmpty()) {
-                    sessionManager.addMessage(sessionId, "assistant", assistantContent, toolCalls)
-                    val results = executeTools(toolCalls, session.workspacePath)
-                    val resultsText = results.joinToString("\n\n") { "${it.name}: ${it.result}" }
-                    sessionManager.addMessage(sessionId, "tool", resultsText)
-                    conversationHistory = buildConversationHistory(sessionId, config.systemPrompt)
-                    continue
-                }
-            }
-
-            sessionManager.addMessage(sessionId, "assistant", assistantContent)
-            _currentOutput.value = ""
-            break
+        val provider = configManager.config.value.let { config ->
+            config.providers[config.defaultProvider]
+                ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
         }
 
-        _isProcessing.value = false
+        sessionManager.addMessage(childSessionId, "user", task)
+
+        val messages = buildConversationHistory(childSessionId, agentDef.systemPrompt)
+        val responseBuilder = StringBuilder()
+
+        llmClient.streamChat(provider, messages).collect { event ->
+            when (event) {
+                is StreamEvent.Token -> responseBuilder.append(event.text)
+                else -> {}
+            }
+        }
+
+        val result = responseBuilder.toString()
+        sessionManager.addMessage(childSessionId, "assistant", result)
+        return result
     }
 
     private fun buildConversationHistory(sessionId: String, systemPrompt: String): List<ChatMessage> {
@@ -111,46 +299,17 @@ class AgentEngine(
         return history
     }
 
-    private fun parseToolCalls(content: String): List<ToolCallData> {
-        val calls = mutableListOf<ToolCallData>()
-        try {
-            val jsonPattern = Regex("```json\\s*(\\{.*?\\})\\s*```", RegexOption.DOT_MATCHES_ALL)
-            jsonPattern.findAll(content).forEach { match ->
-                val obj = Json.parseToJsonElement(match.groupValues[1]).jsonObject
-                val name = obj["tool"]?.jsonPrimitive?.content ?: return@forEach
-                val args = obj["args"]?.jsonObject ?: buildJsonObject {}
-                calls.add(ToolCallData(
-                    id = UUID.randomUUID().toString(),
-                    name = name,
-                    arguments = args.toString()
-                ))
-            }
-        } catch (_: Exception) {}
-        return calls
-    }
-
-    private suspend fun executeTools(calls: List<ToolCallData>, workspace: String): List<ToolCallData> {
-        return calls.map { call ->
-            _toolEvents.emit(ToolEvent.Started(call.name))
-            val tool = toolRegistry.get(call.name)
-            val result = if (tool != null) {
-                try {
-                    val args = Json.parseToJsonElement(call.arguments).jsonObject
-                    tool.execute(args, workspace)
-                } catch (e: Exception) { "Error: ${e.message}" }
-            } else { "Error: Unknown tool: ${call.name}" }
-            _toolEvents.emit(ToolEvent.Completed(call.name, result))
-            call.copy(result = result)
-        }
-    }
-
     fun cancel() {
+        job?.cancel()
         _isProcessing.value = false
         _currentOutput.value = ""
+        _activeTools.value = emptyList()
     }
 }
 
+data class PendingToolCall(val id: String, val name: String, val arguments: String)
+
 sealed class ToolEvent {
-    data class Started(val name: String) : ToolEvent()
+    data class Started(val name: String, val args: String = "") : ToolEvent()
     data class Completed(val name: String, val result: String) : ToolEvent()
 }

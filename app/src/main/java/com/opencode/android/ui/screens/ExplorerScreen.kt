@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -27,7 +28,7 @@ fun ExplorerScreen(
     scanner: ProjectScanner,
     config: ConfigManager,
     onOpenFile: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
 ) {
     val cfg by config.config.collectAsState()
     var currentPath by remember { mutableStateOf(cfg.workspacePath) }
@@ -54,11 +55,14 @@ fun ExplorerScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Explorer", fontWeight = FontWeight.Medium) },
+                title = { Text("Explorer", fontWeight = FontWeight.SemiBold) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
                 actions = {
-                    IconButton(onClick = { launcher.launch(null) }) { Icon(Icons.Default.FolderOpen, "Open Folder") }
-                }
+                    IconButton(onClick = { launcher.launch(null) }) {
+                        Icon(Icons.Default.FolderOpen, "Open Folder")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
         }
     ) { padding ->
@@ -69,7 +73,7 @@ fun ExplorerScreen(
                         Icon(
                             Icons.Default.FolderOpen, null,
                             modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(16.dp))
                         Text("No workspace selected", style = MaterialTheme.typography.titleMedium)
@@ -78,13 +82,17 @@ fun ExplorerScreen(
                     }
                 }
             } else {
-                Text(
-                    currentPath,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(16.dp)
-                )
-                LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp)) {
+                // Path breadcrumb
+                Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
+                    Text(
+                        currentPath,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    )
+                }
+
+                LazyColumn(contentPadding = PaddingValues(8.dp)) {
                     items(files) { node ->
                         FileNodeItem(node, 0, onOpenFile)
                     }
@@ -98,43 +106,56 @@ fun ExplorerScreen(
 fun FileNodeItem(
     node: com.opencode.android.core.filesystem.FileNode,
     depth: Int,
-    onOpenFile: (String) -> Unit
+    onOpenFile: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
 
-    Row(
+    Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = (depth * 16 + 8).dp, end = 8.dp)
+            .padding(start = (depth * 16).dp, top = 2.dp, bottom = 2.dp)
             .clickable {
                 if (node.isDirectory) expanded = !expanded
                 else onOpenFile(node.path)
-            }
-            .padding(vertical = 6.dp, horizontal = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
+            },
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
     ) {
-        if (node.isDirectory) {
-            Icon(
-                if (expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight, null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                Icons.Default.Folder, null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.primary
-            )
-        } else {
-            Spacer(Modifier.width(24.dp))
-            Icon(
-                getFileIcon(node.name), null,
-                modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (node.isDirectory) {
+                Icon(
+                    if (expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight,
+                    null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    Icons.Default.Folder, null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            } else {
+                Spacer(Modifier.width(22.dp))
+                Icon(
+                    getFileIcon(node.name), null,
+                    modifier = Modifier.size(18.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Text(node.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            if (node.isFile) {
+                Text(
+                    formatSize(node.size),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
-        Spacer(Modifier.width(8.dp))
-        Text(node.name, style = MaterialTheme.typography.bodyMedium, maxLines = 1)
     }
 
     if (expanded && node.isDirectory) {
@@ -155,6 +176,12 @@ private fun getFileIcon(name: String) = when {
     else -> Icons.Default.InsertDriveFile
 }
 
+private fun formatSize(bytes: Long): String = when {
+    bytes < 1024 -> "${bytes}B"
+    bytes < 1048576 -> "${bytes / 1024}KB"
+    else -> "${bytes / 1048576}MB"
+}
+
 private fun getRealPathFromUri(context: android.content.Context, uri: Uri): String {
     val docId = DocumentsContract.getTreeDocumentId(uri)
     if (docId.isNotEmpty()) {
@@ -165,14 +192,7 @@ private fun getRealPathFromUri(context: android.content.Context, uri: Uri): Stri
             return when (type) {
                 "primary" -> "${Environment.getExternalStorageDirectory()}/$path"
                 "home" -> "${Environment.getExternalStorageDirectory()}/$path"
-                else -> {
-                    val volumes = listOf("external", "usb", "sdcard")
-                    for (vol in volumes) {
-                        val volPath = "/storage/$vol/$path"
-                        if (java.io.File(volPath).exists()) return volPath
-                    }
-                    "/storage/emulated/0/$path"
-                }
+                else -> "/storage/emulated/0/$path"
             }
         }
     }

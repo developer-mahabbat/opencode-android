@@ -14,27 +14,17 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
-import java.io.BufferedReader
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 @Serializable
 data class ChatMessage(val role: String, val content: String)
-
-@Serializable
-data class ChatRequest(
-    val model: String,
-    val messages: List<ChatMessage>,
-    val max_tokens: Int = 8192,
-    val temperature: Double = 0.7,
-    val stream: Boolean = true
-)
 
 sealed class StreamEvent {
     data object Connected : StreamEvent()
     data class Token(val text: String) : StreamEvent()
     data class Done(val fullText: String) : StreamEvent()
     data class Error(val message: String) : StreamEvent()
+    data class ToolCall(val id: String, val name: String, val arguments: String) : StreamEvent()
 }
 
 class LLMClient {
@@ -45,20 +35,37 @@ class LLMClient {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    suspend fun streamChat(provider: ProviderConfig, messages: List<ChatMessage>): Flow<StreamEvent> = withContext(Dispatchers.IO) {
+    companion object {
+        const val ZEN_BASE_URL = "https://opencode.ai/zen/v1"
+    }
+
+    suspend fun streamChat(
+        provider: ProviderConfig,
+        messages: List<ChatMessage>,
+        model: String = "",
+        maxTokens: Int = 8192,
+        temperature: Double = 0.7,
+    ): Flow<StreamEvent> = withContext(Dispatchers.IO) {
         callbackFlow {
+            val useModel = model.ifEmpty { provider.defaultModel }
             val url = resolveUrl(provider)
-            val body = buildRequestBody(provider, messages)
+            val body = buildRequestBody(provider, messages, useModel, maxTokens, temperature)
             val reqBody = body.toString().toRequestBody("application/json".toMediaType())
 
             val requestBuilder = Request.Builder().url(url).post(reqBody)
-            when (provider.id) {
-                "anthropic" -> {
-                    requestBuilder.addHeader("x-api-key", provider.apiKey)
-                    requestBuilder.addHeader("anthropic-version", "2023-06-01")
+            requestBuilder.addHeader("Content-Type", "application/json")
+            requestBuilder.addHeader("User-Agent", "OpenCode-Android/1.0")
+
+            when {
+                provider.apiKey.isNotEmpty() -> {
+                    requestBuilder.addHeader("Authorization", "Bearer ${provider.apiKey}")
                 }
-                else -> requestBuilder.addHeader("Authorization", "Bearer ${provider.apiKey}")
+                provider.id == "zen" -> {
+                    requestBuilder.addHeader("Authorization", "Bearer public")
+                }
             }
+
+            provider.headers.forEach { (k, v) -> requestBuilder.addHeader(k, v) }
 
             val emitter = EventSources.createFactory(client)
             val es = emitter.newEventSource(requestBuilder.build(), object : EventSourceListener() {
@@ -73,10 +80,29 @@ class LLMClient {
                         val obj = json.parseToJsonElement(data).jsonObject
                         val choices = obj["choices"]?.jsonArray ?: return
                         if (choices.isEmpty()) return
-                        val delta = choices[0].jsonObject["delta"]?.jsonObject ?: return
-                        val content = delta["content"]?.jsonPrimitive?.contentOrNull ?: return
-                        buffer.append(content)
-                        trySend(StreamEvent.Token(content))
+                        val choice = choices[0].jsonObject
+                        val delta = choice["delta"]?.jsonObject ?: return
+
+                        val content = delta["content"]?.jsonPrimitive?.contentOrNull
+                        if (content != null) {
+                            buffer.append(content)
+                            trySend(StreamEvent.Token(content))
+                        }
+
+                        val toolCalls = delta["tool_calls"]?.jsonArray
+                        toolCalls?.forEach { tc ->
+                            val tcObj = tc.jsonObject
+                            val fn = tcObj["function"]?.jsonObject ?: return@forEach
+                            val name = fn["name"]?.jsonPrimitive?.contentOrNull
+                            val args = fn["arguments"]?.jsonPrimitive?.contentOrNull
+                            if (name != null) {
+                                trySend(StreamEvent.ToolCall(
+                                    id = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "",
+                                    name = name,
+                                    arguments = args ?: "{}"
+                                ))
+                            }
+                        }
                     } catch (_: Exception) {}
                 }
 
@@ -98,69 +124,42 @@ class LLMClient {
     private fun resolveUrl(provider: ProviderConfig): String {
         val base = provider.baseUrl.ifEmpty {
             when (provider.id) {
-                "openai" -> "https://api.openai.com"
-                "anthropic" -> "https://api.anthropic.com"
-                "gemini" -> "https://generativelanguage.googleapis.com"
-                "openrouter" -> "https://openrouter.ai/api"
-                else -> "https://api.openai.com"
+                "zen" -> ZEN_BASE_URL
+                "openai" -> "https://api.openai.com/v1"
+                "anthropic" -> "https://api.anthropic.com/v1"
+                "openrouter" -> "https://openrouter.ai/api/v1"
+                else -> ZEN_BASE_URL
             }
         }
-        return when (provider.id) {
-            "anthropic" -> "$base/v1/messages"
-            "gemini" -> "$base/v1beta/models/${provider.defaultModel}:streamGenerateContent"
-            else -> "$base/v1/chat/completions"
+        return when {
+            base.endsWith("/chat/completions") -> base
+            base.endsWith("/v1") -> "$base/chat/completions"
+            else -> "$base/chat/completions"
         }
     }
 
-    private fun buildRequestBody(provider: ProviderConfig, messages: List<ChatMessage>): JsonObject {
-        return when (provider.id) {
-            "anthropic" -> buildAnthropicBody(provider, messages)
-            "gemini" -> buildGeminiBody(messages)
-            else -> buildOpenAIBody(provider, messages)
-        }
-    }
-
-    private fun buildOpenAIBody(provider: ProviderConfig, messages: List<ChatMessage>): JsonObject {
+    private fun buildRequestBody(
+        provider: ProviderConfig,
+        messages: List<ChatMessage>,
+        model: String,
+        maxTokens: Int,
+        temperature: Double,
+    ): JsonObject {
         val arr = buildJsonArray {
             messages.forEach { m ->
-                add(buildJsonObject { put("role", m.role); put("content", m.content) })
-            }
-        }
-        return buildJsonObject {
-            put("model", provider.defaultModel)
-            put("max_tokens", 8192)
-            put("temperature", 0.7)
-            put("stream", true)
-            put("messages", arr)
-        }
-    }
-
-    private fun buildAnthropicBody(provider: ProviderConfig, messages: List<ChatMessage>): JsonObject {
-        val sys = messages.firstOrNull { it.role == "system" }
-        val msgs = messages.filter { it.role != "system" }
-        val arr = buildJsonArray {
-            msgs.forEach { m ->
-                add(buildJsonObject { put("role", m.role); put("content", m.content) })
-            }
-        }
-        return buildJsonObject {
-            put("model", provider.defaultModel)
-            put("max_tokens", 8192)
-            put("stream", true)
-            sys?.let { put("system", it.content) }
-            put("messages", arr)
-        }
-    }
-
-    private fun buildGeminiBody(messages: List<ChatMessage>): JsonObject {
-        val contents = buildJsonArray {
-            messages.filter { it.role != "system" }.forEach { m ->
                 add(buildJsonObject {
-                    put("role", if (m.role == "assistant") "model" else "user")
-                    putJsonArray("parts") { add(buildJsonObject { put("text", m.content) }) }
+                    put("role", m.role)
+                    put("content", m.content)
                 })
             }
         }
-        return buildJsonObject { put("contents", contents) }
+
+        return buildJsonObject {
+            put("model", model)
+            put("messages", arr)
+            put("max_tokens", maxTokens)
+            put("temperature", temperature)
+            put("stream", true)
+        }
     }
 }

@@ -8,17 +8,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import com.opencode.android.core.config.ConfigManager
 import com.opencode.android.core.session.SessionManager
 import com.opencode.android.core.agent.AgentEngine
 import com.opencode.android.core.filesystem.ProjectScanner
 import com.opencode.android.ui.theme.OpenCodeTheme
-import com.opencode.android.ui.screens.*
+import com.opencode.android.ui.navigation.AppScaffold
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
         val configManager = ConfigManager(this)
         val sessionManager = SessionManager()
         val agentEngine = AgentEngine(sessionManager, configManager)
@@ -27,7 +29,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             OpenCodeTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    AppNavHost(configManager, sessionManager, agentEngine, projectScanner)
+                    AppScaffold(configManager, sessionManager, agentEngine, projectScanner)
                 }
             }
         }
