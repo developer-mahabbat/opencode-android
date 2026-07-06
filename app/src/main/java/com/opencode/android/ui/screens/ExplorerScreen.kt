@@ -76,7 +76,7 @@ fun ExplorerScreen(
                 val path = uriToPath(it, context)
                 if (path.isNotEmpty()) {
                     selectedDir = path
-                    config.updateConfig(config.config.value.copy(workspacePath = path))
+                    config.update { it.copy(workspacePath = path) }
                 }
             }
         }
@@ -179,7 +179,7 @@ private fun FileNodeItem(
     depth: Int = 0,
 ) {
     val isExpanded = expandedDirs.contains(node.path)
-    val isDir = node.type == "directory"
+    val isDir = node.isDirectory
 
     Row(
         modifier = Modifier
@@ -207,8 +207,16 @@ private fun FileNodeItem(
             )
         } else {
             Spacer(Modifier.width(22.dp))
+            val fileType = when {
+                node.name.endsWith(".kt") || node.name.endsWith(".kts") -> "kotlin"
+                node.name.endsWith(".json") -> "json"
+                node.name.endsWith(".xml") -> "xml"
+                node.name.endsWith(".gradle") || node.name.endsWith(".gradle.kts") -> "gradle"
+                node.name.endsWith(".gitignore") || node.name.endsWith(".git") -> "git"
+                else -> "other"
+            }
             Icon(
-                when (node.type) {
+                when (fileType) {
                     "kotlin" -> Icons.Default.Code
                     "json" -> Icons.Default.DataObject
                     "xml" -> Icons.Default.FilePresent
@@ -217,7 +225,7 @@ private fun FileNodeItem(
                     else -> Icons.Default.InsertDriveFile
                 },
                 null,
-                tint = when (node.type) {
+                tint = when (fileType) {
                     "kotlin" -> Color(0xFFA97BFF)
                     "json" -> Color(0xFF38ef7d)
                     "xml" -> Color(0xFFf7b733)
@@ -236,7 +244,7 @@ private fun FileNodeItem(
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        if (node.size != null) {
+        if (node.size != null && node.size > 0) {
             Text(
                 formatSize(node.size),
                 fontSize = 11.sp,

@@ -31,11 +31,12 @@ fun SettingsScreen(
     onBack: () -> Unit,
 ) {
     val cfg by config.config.collectAsState()
-    var tempUrl by remember(cfg.baseUrl) { mutableStateOf(cfg.baseUrl) }
-    var tempKey by remember(cfg.apiKey) { mutableStateOf(cfg.apiKey) }
-    var tempModel by remember(cfg.modelName) { mutableStateOf(cfg.modelName) }
+    val activeProvider = cfg.providers[cfg.defaultProvider]
+    var tempUrl by remember(activeProvider) { mutableStateOf(activeProvider?.baseUrl ?: "") }
+    var tempKey by remember(activeProvider) { mutableStateOf(activeProvider?.apiKey ?: "") }
+    var tempModel by remember(cfg.defaultModel) { mutableStateOf(cfg.defaultModel) }
     var tempMaxTokens by remember(cfg.maxTokens.toString()) { mutableStateOf(cfg.maxTokens.toString()) }
-    var tempProvider by remember(cfg.provider) { mutableStateOf(cfg.provider) }
+    var tempProvider by remember(cfg.defaultProvider) { mutableStateOf(cfg.defaultProvider) }
     var showSaveSuccess by remember { mutableStateOf(false) }
     val scrollState = rememberScrollState()
 
@@ -51,15 +52,23 @@ fun SettingsScreen(
                 actions = {
                     IconButton(onClick = {
                         val maxTokens = tempMaxTokens.toIntOrNull() ?: cfg.maxTokens
-                        config.updateConfig(
-                            cfg.copy(
+                        config.update { c ->
+                            val providers = c.providers.toMutableMap()
+                            val existing = providers[tempProvider] ?: com.opencode.android.core.config.ProviderConfig(
+                                id = tempProvider,
+                                name = tempProvider.replaceFirstChar { it.uppercase() },
+                            )
+                            providers[tempProvider] = existing.copy(
                                 baseUrl = tempUrl.trim(),
                                 apiKey = tempKey.trim(),
-                                modelName = tempModel.trim(),
-                                maxTokens = maxTokens.coerceIn(100, 16000),
-                                provider = tempProvider,
                             )
-                        )
+                            c.copy(
+                                defaultProvider = tempProvider,
+                                defaultModel = tempModel.trim(),
+                                maxTokens = maxTokens.coerceIn(100, 16000),
+                                providers = providers,
+                            )
+                        }
                         showSaveSuccess = true
                     }) {
                         Icon(Icons.Default.Check, "Save", tint = GradientStart)
@@ -77,7 +86,6 @@ fun SettingsScreen(
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Save success toast
             if (showSaveSuccess) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
@@ -95,7 +103,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Provider selector
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = CardBg),
@@ -145,7 +152,6 @@ fun SettingsScreen(
                 }
             }
 
-            // API settings
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = CardBg),
@@ -155,7 +161,6 @@ fun SettingsScreen(
                     Text("API Settings", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
                     Spacer(Modifier.height(16.dp))
 
-                    // Base URL
                     OutlinedTextField(
                         value = tempUrl,
                         onValueChange = { tempUrl = it },
@@ -176,7 +181,6 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
 
-                    // API Key (only for non-zen)
                     if (tempProvider != "zen") {
                         OutlinedTextField(
                             value = tempKey,
@@ -199,7 +203,6 @@ fun SettingsScreen(
                         Spacer(Modifier.height(12.dp))
                     }
 
-                    // Model name
                     OutlinedTextField(
                         value = tempModel,
                         onValueChange = { tempModel = it },
@@ -220,7 +223,6 @@ fun SettingsScreen(
                     )
                     Spacer(Modifier.height(12.dp))
 
-                    // Max tokens
                     OutlinedTextField(
                         value = tempMaxTokens,
                         onValueChange = { tempMaxTokens = it.filter { c -> c.isDigit() } },
@@ -242,7 +244,6 @@ fun SettingsScreen(
                 }
             }
 
-            // Available models card
             if (tempProvider == "zen") {
                 Card(
                     modifier = Modifier.fillMaxWidth(),

@@ -171,7 +171,7 @@ fun EditorScreen(
 
                         // Diff header
                         if (diffMode) {
-                            val patch = DiffEngine.createPatch(originalContent, content)
+                            val diffResult = DiffEngine().diff(originalContent, content)
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 color = CardBg,
@@ -183,7 +183,7 @@ fun EditorScreen(
                                     Icon(Icons.Default.Info, null, tint = GradientStart, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(8.dp))
                                     Text(
-                                        if (patch.isEmpty()) "No changes" else "${patch.count { it.startsWith("+") && !it.startsWith("+++") }} additions, ${patch.count { it.startsWith("-") && !it.startsWith("---") }} deletions",
+                                        if (diffResult.additions == 0 && diffResult.deletions == 0) "No changes" else "${diffResult.additions} additions, ${diffResult.deletions} deletions",
                                         fontSize = 13.sp,
                                         color = Color(0xFF8B949E)
                                     )

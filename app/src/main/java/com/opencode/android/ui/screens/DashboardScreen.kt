@@ -49,7 +49,6 @@ fun DashboardScreen(
 ) {
     val cfg by config.config.collectAsState()
     val sessionsList by sessions.sessions.collectAsState()
-    val currentModel by agent.currentModel.collectAsState()
     val currentAgent by agent.currentAgent.collectAsState()
     val isProcessing by agent.isProcessing.collectAsState()
     val context = LocalContext.current
@@ -92,7 +91,7 @@ fun DashboardScreen(
                 StatusCard(
                     modifier = Modifier.weight(1f),
                     title = "Model",
-                    value = cfg.modelName,
+                    value = cfg.defaultModel,
                     icon = Icons.Default.SmartToy,
                     gradient = listOf(GradientStart, GradientEnd)
                 )
@@ -173,7 +172,16 @@ fun DashboardScreen(
                     icon = Icons.Default.Add,
                     label = "New Chat",
                     gradient = listOf(GradientStart, GradientEnd),
-                    onClick = { onNewChat(sessions.createSession()) }
+                    onClick = {
+                        val session = sessions.createSession(
+                            title = "New Chat",
+                            workspacePath = cfg.workspacePath.ifEmpty { "/sdcard" },
+                            modelId = cfg.defaultModel,
+                            providerId = cfg.defaultProvider,
+                            agentId = currentAgent,
+                        )
+                        onNewChat(session.id)
+                    }
                 )
                 QuickAction(
                     modifier = Modifier.weight(1f),
@@ -222,7 +230,7 @@ fun DashboardScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(session.title, fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3), maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${session.messages.size} messages · ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(session.createdAt))}",
+                                "${sessions.getMessages(session.id).size} messages · ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(session.createdAt))}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF8B949E)
                             )

@@ -256,7 +256,20 @@ fun AppScaffold(
                                     },
                                     label = { Text(screen.label, fontSize = 10.sp) },
                                     selected = isSelected,
-                                    onClick = { currentScreen = screen },
+                                    onClick = {
+                                        if (screen == Screen.Chat && sessionId == null) {
+                                            val cfg = config.config.value
+                                            val session = sessions.createSession(
+                                                title = "New Chat",
+                                                workspacePath = cfg.workspacePath.ifEmpty { "/sdcard" },
+                                                modelId = cfg.defaultModel,
+                                                providerId = cfg.defaultProvider,
+                                                agentId = agent.currentAgent.value,
+                                            )
+                                            sessionId = session.id
+                                        }
+                                        currentScreen = screen
+                                    },
                                     colors = NavigationBarItemDefaults.colors(
                                         selectedIconColor = GradientStart,
                                         unselectedIconColor = Color(0xFF8B949E),

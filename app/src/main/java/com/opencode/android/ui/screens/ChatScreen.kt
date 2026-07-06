@@ -142,7 +142,7 @@ fun ChatScreen(
                         }
                     }
                     IconButton(onClick = onOpenTerminal) {
-                        Icon(Icons.Default.Terminal, "Terminal", tint = Color(0xFF8B949E))
+                        Icon(Icons.Default.Code, "Terminal", tint = Color(0xFF8B949E))
                     }
                 }
             }
@@ -367,7 +367,7 @@ fun SuggestionChip(text: String, modifier: Modifier = Modifier) {
         modifier = modifier,
         shape = RoundedCornerShape(20.dp),
         color = Color(0xFF21262D),
-        border = ButtonDefaults.outlinedButtonBorder(enabled = true),
+        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF30363D)),
     ) {
         Text(
             text,
@@ -404,11 +404,15 @@ fun PremiumChatBubble(
                         .size(24.dp)
                         .clip(CircleShape)
                         .background(
-                            if (isError) Color(0xFFF85149).copy(alpha = 0.2f)
-                            else if (isTool) Color(0xFFF9E2AF).copy(alpha = 0.2f)
-                            else Brush.linearGradient(listOf(GradientStart, GradientEnd)).let {
-                                Modifier.background(it)
+                            when {
+                                isError -> Color(0xFFF85149).copy(alpha = 0.2f)
+                                isTool -> Color(0xFFF9E2AF).copy(alpha = 0.2f)
+                                else -> Color.Transparent
                             }
+                        )
+                        .then(
+                            if (!isError && !isTool) Modifier.background(Brush.linearGradient(listOf(GradientStart, GradientEnd)))
+                            else Modifier
                         ),
                     contentAlignment = Alignment.Center,
                 ) {
