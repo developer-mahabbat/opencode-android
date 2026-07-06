@@ -274,7 +274,6 @@ fun AppScaffold(
                                         unselectedIconColor = Color(0xFF8B949E),
                                         selectedTextColor = GradientStart,
                                         unselectedTextColor = Color(0xFF8B949E),
-                                        indicatorColor = GradientStart.copy(alpha = 0.1f),
                                     ),
                                 )
                             }

@@ -73,11 +73,11 @@ class LLMClient {
                 private val buffer = StringBuilder()
 
                 override fun onEvent(eventSource: EventSource, id: String?, type: String?, data: String) {
-                    if (data == "[DONE]") {
-                        trySend(StreamEvent.Done(buffer.toString()))
-                        return
-                    }
                     try {
+                        if (data == "[DONE]") {
+                            trySend(StreamEvent.Done(buffer.toString()))
+                            return
+                        }
                         val obj = json.parseToJsonElement(data).jsonObject
                         val choices = obj["choices"]?.jsonArray ?: return
                         if (choices.isEmpty()) return
@@ -92,16 +92,20 @@ class LLMClient {
 
                         val toolCalls = delta["tool_calls"]?.jsonArray
                         toolCalls?.forEach { tc ->
-                            val tcObj = tc.jsonObject
-                            val fn = tcObj["function"]?.jsonObject ?: return@forEach
-                            val name = fn["name"]?.jsonPrimitive?.contentOrNull
-                            val args = fn["arguments"]?.jsonPrimitive?.contentOrNull
-                            if (name != null) {
-                                trySend(StreamEvent.ToolCall(
-                                    id = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "",
-                                    name = name,
-                                    arguments = args ?: "{}"
-                                ))
+                            try {
+                                val tcObj = tc.jsonObject
+                                val fn = tcObj["function"]?.jsonObject ?: return@forEach
+                                val name = fn["name"]?.jsonPrimitive?.contentOrNull
+                                val args = fn["arguments"]?.jsonPrimitive?.contentOrNull
+                                if (name != null) {
+                                    trySend(StreamEvent.ToolCall(
+                                        id = tcObj["id"]?.jsonPrimitive?.contentOrNull ?: "",
+                                        name = name,
+                                        arguments = args ?: "{}"
+                                    ))
+                                }
+                            } catch (e: Exception) {
+                                Timber.w(e, "Failed to parse tool call chunk")
                             }
                         }
                     } catch (e: Exception) {
@@ -110,18 +114,25 @@ class LLMClient {
                 }
 
                 override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
-                    val msg = t?.message ?: response?.let { "HTTP ${it.code}" } ?: "Unknown error"
-                    Timber.e("SSE failure: %s", msg)
-                    trySend(StreamEvent.Error(msg))
-                    close()
+                    try {
+                        val msg = t?.message ?: response?.let { "HTTP ${it.code}" } ?: "Unknown error"
+                        Timber.e("SSE failure: %s", msg)
+                        trySend(StreamEvent.Error(msg))
+                    } catch (e: Exception) {
+                        Timber.e(e, "Failed to send error event")
+                    } finally {
+                        try { close() } catch (_: Exception) {}
+                    }
                 }
 
                 override fun onClosed(eventSource: EventSource) {
-                    close()
+                    try { close() } catch (_: Exception) {}
                 }
             })
 
-            awaitClose { es.cancel() }
+            awaitClose {
+                try { es.cancel() } catch (_: Exception) {}
+            }
         }
     }
 

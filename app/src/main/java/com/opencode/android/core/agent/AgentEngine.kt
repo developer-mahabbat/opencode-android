@@ -146,7 +146,12 @@ class AgentEngine(
     }
 
     fun processMessage(sessionId: String, userMessage: String) {
-        if (_isProcessing.value) return
+        Timber.d("processMessage called: sessionId=$sessionId, message=${userMessage.take(50)}")
+
+        if (_isProcessing.value) {
+            Timber.w("Already processing, ignoring")
+            return
+        }
         processingJob?.cancel()
 
         processingJob = scope.launch {
@@ -156,26 +161,47 @@ class AgentEngine(
             _errorMessage.value = null
 
             try {
+                // Validate config
                 val config = configManager.config.value
-                val provider = config.providers[config.defaultProvider]
-                    ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
-                val session = sessionManager.getSession(sessionId) ?: run {
-                    _errorMessage.value = "Session not found"
+                Timber.d("Config loaded: provider=${config.defaultProvider}, model=${config.defaultModel}")
+
+                val provider = config.providers[config.defaultProvider] ?: run {
+                    val msg = "Provider not found: ${config.defaultProvider}"
+                    Timber.e(msg)
+                    _errorMessage.value = msg
+                    _currentOutput.value = msg
                     return@launch
                 }
+                Timber.d("Provider resolved: ${provider.id}, baseUrl=${provider.baseUrl}")
+
+                val session = sessionManager.getSession(sessionId) ?: run {
+                    val msg = "Session not found: $sessionId"
+                    Timber.e(msg)
+                    _errorMessage.value = msg
+                    _currentOutput.value = msg
+                    return@launch
+                }
+                Timber.d("Session found: ${session.id}")
+
                 val agentDef = AgentRegistry.getAgent(_currentAgent.value)
+                Timber.d("Agent: ${agentDef.id} (${agentDef.name})")
 
                 sessionManager.addMessage(sessionId, "user", userMessage)
+                Timber.d("User message added")
 
                 var conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
+                Timber.d("Conversation history built: ${conversationHistory.size} messages")
+
                 var iterations = 0
 
                 while (iterations < agentDef.maxSteps && _isProcessing.value) {
                     iterations++
+                    Timber.d("Iteration $iterations/${agentDef.maxSteps}")
                     val responseBuilder = StringBuilder()
                     val toolCallsList = mutableListOf<PendingToolCall>()
 
                     try {
+                        Timber.d("Starting stream chat...")
                         llmClient.streamChat(
                             provider = provider,
                             messages = conversationHistory,
@@ -189,6 +215,7 @@ class AgentEngine(
                                     _currentOutput.value = responseBuilder.toString()
                                 }
                                 is StreamEvent.ToolCall -> {
+                                    Timber.d("Tool call: ${event.name}")
                                     if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
                                         if (event.name !in agentDef.deniedTools) {
                                             toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
@@ -197,12 +224,20 @@ class AgentEngine(
                                     }
                                 }
                                 is StreamEvent.Error -> {
+                                    Timber.e("Stream error: ${event.message}")
                                     _errorMessage.value = event.message
                                     _currentOutput.value = "Error: ${event.message}"
+                                }
+                                is StreamEvent.Done -> {
+                                    Timber.d("Stream done, full text length: ${event.fullText.length}")
                                 }
                                 else -> {}
                             }
                         }
+                        Timber.d("Stream collection completed")
+                    } catch (e: CancellationException) {
+                        Timber.d("Stream collection cancelled")
+                        throw e
                     } catch (e: Exception) {
                         Timber.e(e, "Stream collection failed")
                         _errorMessage.value = e.message ?: "Connection failed"
@@ -210,23 +245,39 @@ class AgentEngine(
                     }
 
                     val assistantContent = responseBuilder.toString()
+                    Timber.d("Assistant response length: ${assistantContent.length}")
 
                     if (toolCallsList.isNotEmpty()) {
+                        Timber.d("Processing ${toolCallsList.size} tool calls")
                         sessionManager.addMessage(sessionId, "assistant", assistantContent,
                             toolCalls = toolCallsList.map { ToolCallData(it.id, it.name, it.arguments) })
 
                         val toolResults = mutableListOf<String>()
                         for (tc in toolCallsList) {
-                            _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
+                            try {
+                                _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
+                            } catch (e: Exception) {
+                                Timber.w(e, "Failed to emit tool event")
+                            }
                             val tool = toolRegistry.get(tc.name)
                             val result = if (tool != null) {
                                 try {
                                     val args = Json.parseToJsonElement(tc.arguments).jsonObject
                                     tool.execute(args, session.workspacePath)
-                                } catch (e: Exception) { "Error: ${e.message}" }
-                            } else { "Error: Unknown tool: ${tc.name}" }
+                                } catch (e: Exception) {
+                                    Timber.e(e, "Tool execution failed: ${tc.name}")
+                                    "Error: ${e.message}"
+                                }
+                            } else {
+                                Timber.w("Unknown tool: ${tc.name}")
+                                "Error: Unknown tool: ${tc.name}"
+                            }
                             toolResults.add("${tc.name}: $result")
-                            _toolEvents.emit(ToolEvent.Completed(tc.name, result))
+                            try {
+                                _toolEvents.emit(ToolEvent.Completed(tc.name, result))
+                            } catch (e: Exception) {
+                                Timber.w(e, "Failed to emit tool event")
+                            }
                         }
 
                         sessionManager.addMessage(sessionId, "tool", toolResults.joinToString("\n\n"))
@@ -241,6 +292,7 @@ class AgentEngine(
                     _currentOutput.value = ""
                     break
                 }
+                Timber.d("Processing completed successfully")
             } catch (e: CancellationException) {
                 Timber.d("Processing cancelled")
             } catch (e: Exception) {
