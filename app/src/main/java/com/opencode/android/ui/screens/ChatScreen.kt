@@ -29,7 +29,6 @@ import com.opencode.android.core.agent.AgentEngine
 import com.opencode.android.core.agent.AgentRegistry
 import com.opencode.android.core.config.ConfigManager
 import com.opencode.android.core.session.SessionManager
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -47,16 +46,18 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     val isProcessing by agent.isProcessing.collectAsState()
     val output by agent.currentOutput.collectAsState()
-    var messages by remember { mutableStateOf(sessions.getMessages(sessionId)) }
+    val allMessages by sessions.messages.collectAsState()
+    val messages = remember(allMessages, sessionId) { allMessages.filter { it.sessionId == sessionId } }
     val listState = rememberLazyListState()
     val keyboard = LocalSoftwareKeyboardController.current
-    val scope = rememberCoroutineScope()
     val currentAgent by agent.currentAgent.collectAsState()
     val agentDef = AgentRegistry.getAgent(currentAgent)
     val activeTools by agent.activeTools.collectAsState()
 
     LaunchedEffect(messages.size, output) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty() || output.isNotEmpty()) {
+            listState.animateScrollToItem((messages.size - 1).coerceAtLeast(0))
+        }
     }
 
     Scaffold(
@@ -155,10 +156,7 @@ fun ChatScreen(
                             keyboardActions = KeyboardActions(onSend = {
                                 if (input.isNotBlank() && !isProcessing) {
                                     val msg = input; input = ""; keyboard?.hide()
-                                    scope.launch {
-                                        agent.processMessage(sessionId, msg)
-                                        messages = sessions.getMessages(sessionId)
-                                    }
+                                    agent.processMessage(sessionId, msg)
                                 }
                             }),
                             maxLines = 6,
@@ -182,10 +180,7 @@ fun ChatScreen(
                                 onClick = {
                                     if (input.isNotBlank()) {
                                         val msg = input; input = ""; keyboard?.hide()
-                                        scope.launch {
-                                            agent.processMessage(sessionId, msg)
-                                            messages = sessions.getMessages(sessionId)
-                                        }
+                                        agent.processMessage(sessionId, msg)
                                     }
                                 },
                                 enabled = input.isNotBlank(),

@@ -14,6 +14,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
+import timber.log.Timber
 import java.util.concurrent.TimeUnit
 
 @Serializable
@@ -103,11 +104,14 @@ class LLMClient {
                                 ))
                             }
                         }
-                    } catch (_: Exception) {}
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to parse SSE chunk")
+                    }
                 }
 
                 override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                     val msg = t?.message ?: response?.let { "HTTP ${it.code}" } ?: "Unknown error"
+                    Timber.e("SSE failure: %s", msg)
                     trySend(StreamEvent.Error(msg))
                     close()
                 }

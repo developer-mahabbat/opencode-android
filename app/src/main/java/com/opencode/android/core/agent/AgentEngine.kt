@@ -148,98 +148,97 @@ class AgentEngine(
         _currentAgent.value = agentId
     }
 
-    suspend fun processMessage(sessionId: String, userMessage: String) {
-        job = coroutineScope {
-            launch {
-                _isProcessing.value = true
-                _currentOutput.value = ""
-                _activeTools.value = emptyList()
+    fun processMessage(sessionId: String, userMessage: String) {
+        job?.cancel()
+        job = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+            _isProcessing.value = true
+            _currentOutput.value = ""
+            _activeTools.value = emptyList()
 
-                try {
-                    val config = configManager.config.value
-                    val provider = config.providers[config.defaultProvider]
-                        ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
-                    val session = sessionManager.getSession(sessionId) ?: return@launch
-                    val agentDef = AgentRegistry.getAgent(_currentAgent.value)
+            try {
+                val config = configManager.config.value
+                val provider = config.providers[config.defaultProvider]
+                    ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
+                val session = sessionManager.getSession(sessionId) ?: return@launch
+                val agentDef = AgentRegistry.getAgent(_currentAgent.value)
 
-                    sessionManager.addMessage(sessionId, "user", userMessage)
+                sessionManager.addMessage(sessionId, "user", userMessage)
 
-                    var conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
-                    var iterations = 0
+                var conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
+                var iterations = 0
 
-                    while (iterations < agentDef.maxSteps && _isProcessing.value) {
-                        iterations++
-                        val responseBuilder = StringBuilder()
-                        val toolCallsList = mutableListOf<PendingToolCall>()
+                while (iterations < agentDef.maxSteps && _isProcessing.value) {
+                    iterations++
+                    val responseBuilder = StringBuilder()
+                    val toolCallsList = mutableListOf<PendingToolCall>()
 
-                        llmClient.streamChat(
-                            provider = provider,
-                            messages = conversationHistory,
-                            model = config.defaultModel,
-                            maxTokens = config.maxTokens,
-                            temperature = agentDef.temperature,
-                        ).collect { event ->
-                            when (event) {
-                                is StreamEvent.Token -> {
-                                    responseBuilder.append(event.text)
-                                    _currentOutput.value = responseBuilder.toString()
-                                }
-                                is StreamEvent.ToolCall -> {
-                                    if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
-                                        if (event.name !in agentDef.deniedTools) {
-                                            toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
-                                            _activeTools.value = _activeTools.value + event.name
-                                        }
+                    llmClient.streamChat(
+                        provider = provider,
+                        messages = conversationHistory,
+                        model = config.defaultModel,
+                        maxTokens = config.maxTokens,
+                        temperature = agentDef.temperature,
+                    ).collect { event ->
+                        when (event) {
+                            is StreamEvent.Token -> {
+                                responseBuilder.append(event.text)
+                                _currentOutput.value = responseBuilder.toString()
+                            }
+                            is StreamEvent.ToolCall -> {
+                                if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
+                                    if (event.name !in agentDef.deniedTools) {
+                                        toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
+                                        _activeTools.value = _activeTools.value + event.name
                                     }
                                 }
-                                is StreamEvent.Error -> {
-                                    sessionManager.addMessage(sessionId, "assistant", "Error: ${event.message}")
-                                    _currentOutput.value = "Error: ${event.message}"
-                                }
-                                else -> {}
                             }
-                        }
-
-                        val assistantContent = responseBuilder.toString()
-
-                        if (toolCallsList.isNotEmpty()) {
-                            sessionManager.addMessage(sessionId, "assistant", assistantContent,
-                                toolCalls = toolCallsList.map { ToolCallData(it.id, it.name, it.arguments) })
-
-                            val toolResults = mutableListOf<String>()
-                            for (tc in toolCallsList) {
-                                _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
-                                val tool = toolRegistry.get(tc.name)
-                                val result = if (tool != null) {
-                                    try {
-                                        val args = Json.parseToJsonElement(tc.arguments).jsonObject
-                                        tool.execute(args, session.workspacePath)
-                                    } catch (e: Exception) { "Error: ${e.message}" }
-                                } else { "Error: Unknown tool: ${tc.name}" }
-                                toolResults.add("${tc.name}: $result")
-                                _toolEvents.emit(ToolEvent.Completed(tc.name, result))
+                            is StreamEvent.Error -> {
+                                sessionManager.addMessage(sessionId, "assistant", "Error: ${event.message}")
+                                _currentOutput.value = "Error: ${event.message}"
                             }
+                            else -> {}
+                        }
+                    }
 
-                            sessionManager.addMessage(sessionId, "tool", toolResults.joinToString("\n\n"))
-                            conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
-                            _activeTools.value = emptyList()
-                            continue
+                    val assistantContent = responseBuilder.toString()
+
+                    if (toolCallsList.isNotEmpty()) {
+                        sessionManager.addMessage(sessionId, "assistant", assistantContent,
+                            toolCalls = toolCallsList.map { ToolCallData(it.id, it.name, it.arguments) })
+
+                        val toolResults = mutableListOf<String>()
+                        for (tc in toolCallsList) {
+                            _toolEvents.emit(ToolEvent.Started(tc.name, tc.arguments))
+                            val tool = toolRegistry.get(tc.name)
+                            val result = if (tool != null) {
+                                try {
+                                    val args = Json.parseToJsonElement(tc.arguments).jsonObject
+                                    tool.execute(args, session.workspacePath)
+                                } catch (e: Exception) { "Error: ${e.message}" }
+                            } else { "Error: Unknown tool: ${tc.name}" }
+                            toolResults.add("${tc.name}: $result")
+                            _toolEvents.emit(ToolEvent.Completed(tc.name, result))
                         }
 
-                        if (assistantContent.isNotBlank()) {
-                            sessionManager.addMessage(sessionId, "assistant", assistantContent)
-                        }
-                        _currentOutput.value = ""
-                        break
+                        sessionManager.addMessage(sessionId, "tool", toolResults.joinToString("\n\n"))
+                        conversationHistory = buildConversationHistory(sessionId, agentDef.systemPrompt)
+                        _activeTools.value = emptyList()
+                        continue
                     }
-                } catch (e: Exception) {
-                    if (e !is CancellationException) {
-                        _currentOutput.value = "Error: ${e.message}"
+
+                    if (assistantContent.isNotBlank()) {
+                        sessionManager.addMessage(sessionId, "assistant", assistantContent)
                     }
-                } finally {
-                    _isProcessing.value = false
-                    _activeTools.value = emptyList()
+                    _currentOutput.value = ""
+                    break
                 }
+            } catch (e: Exception) {
+                if (e !is CancellationException) {
+                    _currentOutput.value = "Error: ${e.message}"
+                }
+            } finally {
+                _isProcessing.value = false
+                _activeTools.value = emptyList()
             }
         }
     }
@@ -295,6 +294,7 @@ class AgentEngine(
 
     fun cancel() {
         job?.cancel()
+        job = null
         _isProcessing.value = false
         _currentOutput.value = ""
         _activeTools.value = emptyList()

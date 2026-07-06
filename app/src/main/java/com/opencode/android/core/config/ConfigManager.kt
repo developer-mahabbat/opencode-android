@@ -15,7 +15,15 @@ data class AppConfig(
     val defaultModel: String = "deepseek-v4-flash-free",
     val workspacePath: String = "",
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
-    val providers: Map<String, ProviderConfig> = emptyMap(),
+    val providers: Map<String, ProviderConfig> = mapOf(
+        "zen" to ProviderConfig(
+            id = "zen",
+            name = "Zen",
+            apiKey = "",
+            baseUrl = "https://opencode.ai/zen/v1",
+            defaultModel = "deepseek-v4-flash-free",
+        )
+    ),
     val activeAgent: String = "build",
     val themeMode: String = "system",
     val fontSize: Int = 14,

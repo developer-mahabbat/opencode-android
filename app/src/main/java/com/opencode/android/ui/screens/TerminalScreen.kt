@@ -166,7 +166,7 @@ fun TerminalScreen(
                                             "Error: ${e.message}"
                                         }
                                     }
-                                    logs = logs + TerminalLine(result, isError = result.startsWith("Error") || result.startsWith("exit code [^0]"))
+                                    logs = logs + TerminalLine(result, isError = result.startsWith("Error") || (result.startsWith("exit code") && !result.startsWith("exit code 0")))
                                     isRunning = false
                                 }
                             }
@@ -197,7 +197,7 @@ fun TerminalScreen(
                                             "Error: ${e.message}"
                                         }
                                     }
-                                    logs = logs + TerminalLine(result, isError = result.startsWith("Error") || result.startsWith("exit code [^0]"))
+                                    logs = logs + TerminalLine(result, isError = result.startsWith("Error") || (result.startsWith("exit code") && !result.startsWith("exit code 0")))
                                     isRunning = false
                                 }
                             }

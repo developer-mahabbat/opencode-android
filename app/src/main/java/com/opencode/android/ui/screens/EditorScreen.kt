@@ -23,14 +23,26 @@ import java.io.File
 @Composable
 fun EditorScreen(filePath: String, onBack: () -> Unit) {
     var content by remember { mutableStateOf("") }
+    var fileError by remember { mutableStateOf<String?>(null) }
     var isModified by remember { mutableStateOf(false) }
     val scanner = remember { ProjectScanner() }
-    val scrollState = rememberScrollState()
+    val codeScrollState = rememberScrollState()
+    val lineScrollState = rememberScrollState()
     val fileName = File(filePath).name
     val lineCount = content.lines().size.coerceAtLeast(1)
 
     LaunchedEffect(filePath) {
-        content = scanner.readFile(filePath) ?: "Error: Could not read file"
+        val loaded = scanner.readFile(filePath)
+        if (loaded != null) {
+            content = loaded
+            fileError = null
+        } else {
+            fileError = "Could not read file: $filePath"
+        }
+    }
+
+    LaunchedEffect(codeScrollState.value) {
+        lineScrollState.scrollTo(codeScrollState.value)
     }
 
     Scaffold(
@@ -64,7 +76,6 @@ fun EditorScreen(filePath: String, onBack: () -> Unit) {
         }
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            // Status bar
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
                 modifier = Modifier.fillMaxWidth(),
@@ -76,52 +87,60 @@ fun EditorScreen(filePath: String, onBack: () -> Unit) {
                     Text("Lines: $lineCount", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("Chars: ${content.length}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (isModified) Text("Modified", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                    if (fileError != null) Text(fileError!!, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
             }
 
-            // Editor
-            Row(modifier = Modifier.weight(1f)) {
-                // Line numbers
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
-                    modifier = Modifier.width(48.dp),
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .verticalScroll(scrollState)
-                            .padding(top = 12.dp),
-                    ) {
-                        for (i in 1..lineCount) {
-                            Text(
-                                "$i",
-                                style = TextStyle(
-                                    fontSize = 12.sp,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                                ),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 1.dp),
-                            )
-                        }
+            if (fileError != null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Default.Error, null, modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.error)
+                        Spacer(Modifier.height(8.dp))
+                        Text(fileError!!, color = MaterialTheme.colorScheme.error)
                     }
                 }
+            } else {
+                Row(modifier = Modifier.weight(1f)) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f),
+                        modifier = Modifier.width(48.dp),
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .verticalScroll(lineScrollState)
+                                .padding(top = 12.dp),
+                        ) {
+                            for (i in 1..lineCount) {
+                                Text(
+                                    "$i",
+                                    style = TextStyle(
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                                    ),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 1.dp),
+                                )
+                            }
+                        }
+                    }
 
-                // Code
-                BasicTextField(
-                    value = content,
-                    onValueChange = { content = it; isModified = true },
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(scrollState)
-                        .padding(12.dp),
-                    textStyle = TextStyle(
-                        fontSize = 13.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        lineHeight = 20.sp,
-                    ),
-                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                )
+                    BasicTextField(
+                        value = content,
+                        onValueChange = { content = it; isModified = true },
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(codeScrollState)
+                            .padding(12.dp),
+                        textStyle = TextStyle(
+                            fontSize = 13.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 20.sp,
+                        ),
+                        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    )
+                }
             }
         }
     }
