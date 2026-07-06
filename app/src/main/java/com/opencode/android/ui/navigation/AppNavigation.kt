@@ -138,7 +138,6 @@ fun AppScaffold(
                         shape = RoundedCornerShape(12.dp),
                         colors = NavigationDrawerItemDefaults.colors(
                             selectedContainerColor = GradientStart.copy(alpha = 0.1f),
-                            indicatorColor = GradientStart.copy(alpha = 0.1f),
                         ),
                     )
                 }

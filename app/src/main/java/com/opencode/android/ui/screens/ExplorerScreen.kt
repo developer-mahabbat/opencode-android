@@ -49,7 +49,7 @@ fun ExplorerScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val cfg by config.config.collectAsState()
-    var root by remember { mutableStateOf<FileNode?>(null) }
+    var projectInfo by remember { mutableStateOf<com.opencode.android.core.filesystem.ProjectInfo?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var selectedDir by remember { mutableStateOf(cfg.workspacePath.ifEmpty { null }) }
     var expandedDirs by remember { mutableStateOf(setOf<String>()) }
@@ -58,7 +58,7 @@ fun ExplorerScreen(
     LaunchedEffect(selectedDir) {
         if (selectedDir != null) {
             isLoading = true
-            root = withContext(Dispatchers.IO) { scanner.scan(selectedDir!!) }
+            projectInfo = withContext(Dispatchers.IO) { scanner.scan(selectedDir!!) }
             isLoading = false
         }
     }
@@ -147,13 +147,13 @@ fun ExplorerScreen(
                         CircularProgressIndicator(color = GradientStart)
                     }
                 }
-                root != null -> {
+                projectInfo != null -> {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
-                        items(root!!.children) { node ->
+                        items(projectInfo!!.structure) { node ->
                             FileNodeItem(
                                 node = node,
                                 expandedDirs = expandedDirs,
