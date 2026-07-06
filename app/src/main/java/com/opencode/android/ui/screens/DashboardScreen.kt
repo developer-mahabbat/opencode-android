@@ -1,11 +1,11 @@
 package com.opencode.android.ui.screens
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -28,8 +29,14 @@ import com.opencode.android.core.agent.AgentEngine
 import com.opencode.android.core.agent.AgentRegistry
 import com.opencode.android.core.config.ConfigManager
 import com.opencode.android.core.session.SessionManager
+import java.text.SimpleDateFormat
+import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+private val GradientStart = Color(0xFF667eea)
+private val GradientEnd = Color(0xFF764ba2)
+private val CardBg = Color(0xFF161B22)
+private val SurfaceBg = Color(0xFF0D1117)
+
 @Composable
 fun DashboardScreen(
     config: ConfigManager,
@@ -40,30 +47,39 @@ fun DashboardScreen(
     onOpenWorkspace: () -> Unit,
     onSettings: () -> Unit,
 ) {
-    val sessionList by sessions.sessions.collectAsState()
     val cfg by config.config.collectAsState()
-    val isProcessing by agent.isProcessing.collectAsState()
+    val sessionsList by sessions.sessions.collectAsState()
+    val currentModel by agent.currentModel.collectAsState()
     val currentAgent by agent.currentAgent.collectAsState()
+    val isProcessing by agent.isProcessing.collectAsState()
+    val context = LocalContext.current
+    val agentDef = AgentRegistry.getAgent(currentAgent)
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.fillMaxSize().background(SurfaceBg),
         contentPadding = PaddingValues(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        // Welcome header
+        // Header
         item {
-            Column {
-                Text(
-                    "OpenCode",
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onBackground,
-                )
-                Text(
-                    "AI-Powered Coding Assistant",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("OpenCode", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                    Text("AI Coding Assistant", style = MaterialTheme.typography.bodyMedium, color = Color(0xFF8B949E))
+                }
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(GradientStart, GradientEnd))),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("OC", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
             }
         }
 
@@ -71,61 +87,72 @@ fun DashboardScreen(
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 StatusCard(
                     modifier = Modifier.weight(1f),
-                    title = "Status",
-                    value = if (isProcessing) "Processing" else "Ready",
-                    icon = if (isProcessing) Icons.Default.Sync else Icons.Default.CheckCircle,
-                    color = if (isProcessing) Color(0xFFFFB74D) else Color(0xFF81C784),
+                    title = "Model",
+                    value = cfg.modelName,
+                    icon = Icons.Default.SmartToy,
+                    gradient = listOf(GradientStart, GradientEnd)
                 )
                 StatusCard(
                     modifier = Modifier.weight(1f),
                     title = "Agent",
-                    value = AgentRegistry.getAgent(currentAgent).name,
-                    icon = Icons.Default.SmartToy,
-                    color = Color(android.graphics.Color.parseColor(AgentRegistry.getAgent(currentAgent).color)),
-                )
-                StatusCard(
-                    modifier = Modifier.weight(1f),
-                    title = "Sessions",
-                    value = "${sessionList.size}",
-                    icon = Icons.Default.Forum,
-                    color = Color(0xFF90CAF9),
+                    value = agentDef.name,
+                    icon = Icons.Default.AccountTree,
+                    gradient = listOf(Color(0xFF11998e), Color(0xFF38ef7d))
                 )
             }
         }
 
-        // Model selector
+        // Agent selector
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
                 shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Memory, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Model", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.weight(1f))
-                        Text(cfg.defaultModel, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(config.getAvailableModels()) { model ->
-                            FilterChip(
-                                selected = cfg.defaultModel == model.id,
-                                onClick = { config.update { c -> c.copy(defaultModel = model.id) } },
-                                label = { Text(model.name, fontSize = 12.sp) },
-                                leadingIcon = {
-                                    if (cfg.defaultModel == model.id) {
-                                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
-                                    }
-                                },
-                                shape = RoundedCornerShape(20.dp),
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("Active Agent", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
+                    Spacer(Modifier.height(12.dp))
+                    val agents = AgentRegistry.getPrimaryAgents()
+                    agents.forEach { a ->
+                        val isSelected = currentAgent == a.id
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isSelected) GradientStart.copy(alpha = 0.1f) else Color.Transparent
+                                )
+                                .clickable { agent.switchAgent(a.id) }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(android.graphics.Color.parseColor(a.color)))
                             )
+                            Spacer(Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(a.name, fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3))
+                                Text(
+                                    when (a.id) {
+                                        "coder" -> "Write & refactor code"
+                                        "task" -> "Complex multi-step tasks"
+                                        "title" -> "Generate chat titles"
+                                        else -> ""
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF8B949E)
+                                )
+                            }
+                            if (isSelected) {
+                                Icon(Icons.Default.CheckCircle, null, tint = GradientStart)
+                            }
                         }
                     }
                 }
@@ -134,152 +161,154 @@ fun DashboardScreen(
 
         // Quick actions
         item {
-            Text("Quick Actions", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+            Text("Quick Actions", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
         }
-
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                QuickActionCard(
+                QuickAction(
                     modifier = Modifier.weight(1f),
-                    title = "New Chat",
-                    subtitle = "Start conversation",
                     icon = Icons.Default.Add,
-                    color = MaterialTheme.colorScheme.primary,
-                    onClick = {
-                        val session = sessions.createSession(
-                            title = "New Chat",
-                            workspacePath = cfg.workspacePath,
-                            modelId = cfg.defaultModel,
-                            providerId = cfg.defaultProvider,
-                        )
-                        onNewChat(session.id)
-                    }
+                    label = "New Chat",
+                    gradient = listOf(GradientStart, GradientEnd),
+                    onClick = { onNewChat(sessions.createSession()) }
                 )
-                QuickActionCard(
+                QuickAction(
                     modifier = Modifier.weight(1f),
-                    title = "Explore",
-                    subtitle = "Browse files",
                     icon = Icons.Default.FolderOpen,
-                    color = Color(0xFF81C784),
-                    onClick = onOpenWorkspace,
+                    label = "Open Folder",
+                    gradient = listOf(Color(0xFF11998e), Color(0xFF38ef7d)),
+                    onClick = onOpenWorkspace
                 )
-                QuickActionCard(
+                QuickAction(
                     modifier = Modifier.weight(1f),
-                    title = "Settings",
-                    subtitle = "Configure",
                     icon = Icons.Default.Settings,
-                    color = Color(0xFFFFB74D),
-                    onClick = onSettings,
+                    label = "Settings",
+                    gradient = listOf(Color(0xFFfc4a1a), Color(0xFFf7b733)),
+                    onClick = onSettings
                 )
             }
         }
 
         // Recent sessions
-        if (sessionList.isNotEmpty()) {
+        if (sessionsList.isNotEmpty()) {
             item {
-                Text("Recent Sessions", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
+                Text("Recent Sessions", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
             }
-
-            items(sessionList.take(5)) { session ->
+            items(sessionsList.take(5)) { session ->
                 Card(
-                    modifier = Modifier.fillMaxWidth().clickable { onOpenChat(session.id) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenChat(session.id) },
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
                     shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
                 ) {
                     Row(
                         modifier = Modifier.padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Box(
                             modifier = Modifier
                                 .size(40.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer),
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(GradientStart.copy(alpha = 0.1f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Chat, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                            Icon(Icons.Default.Chat, null, tint = GradientStart, modifier = Modifier.size(20.dp))
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(session.title, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(session.modelId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(session.title, fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${session.messages.size} messages · ${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(session.createdAt))}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF8B949E)
+                            )
                         }
-                        Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(Icons.Default.ChevronRight, null, tint = Color(0xFF8B949E))
                     }
                 }
             }
         }
 
-        // Capabilities
-        item {
-            Text("Capabilities", fontWeight = FontWeight.SemiBold, fontSize = 18.sp)
-        }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CapabilityBadge("File Operations", Icons.Default.Edit, Modifier.weight(1f))
-                CapabilityBadge("Web Search", Icons.Default.Search, Modifier.weight(1f))
-                CapabilityBadge("Shell Exec", Icons.Default.Terminal, Modifier.weight(1f))
+        // Workspace info
+        if (cfg.workspacePath.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(Color(0xFF11998e).copy(alpha = 0.1f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Folder, null, tint = Color(0xFF11998e), modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text("Workspace", fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3))
+                            Text(cfg.workspacePath, style = MaterialTheme.typography.bodySmall, color = Color(0xFF8B949E), maxLines = 1)
+                        }
+                    }
+                }
             }
         }
-
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                CapabilityBadge("Git", Icons.Default.Code, Modifier.weight(1f))
-                CapabilityBadge("Code Edit", Icons.Default.EditNote, Modifier.weight(1f))
-                CapabilityBadge("Sub-Agents", Icons.Default.AccountTree, Modifier.weight(1f))
-            }
-        }
-
-        // Spacer for bottom nav
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
 @Composable
-fun StatusCard(
+private fun StatusCard(
     modifier: Modifier = Modifier,
     title: String,
     value: String,
     icon: ImageVector,
-    color: Color,
+    gradient: List<Color>,
 ) {
     Card(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        shape = RoundedCornerShape(16.dp),
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Column(modifier = Modifier.padding(16.dp)) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(brush = Brush.linearGradient(gradient)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(18.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(title, style = MaterialTheme.typography.bodySmall, color = Color(0xFF8B949E))
+            Spacer(Modifier.height(2.dp))
+            Text(value, fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3), fontSize = 14.sp)
         }
     }
 }
 
 @Composable
-fun QuickActionCard(
+private fun QuickAction(
     modifier: Modifier = Modifier,
-    title: String,
-    subtitle: String,
     icon: ImageVector,
-    color: Color,
+    label: String,
+    gradient: List<Color>,
     onClick: () -> Unit,
 ) {
     Card(
         modifier = modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.1f)),
+        colors = CardDefaults.cardColors(containerColor = CardBg),
+        shape = RoundedCornerShape(16.dp),
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -287,34 +316,15 @@ fun QuickActionCard(
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
-                    .background(color.copy(alpha = 0.2f)),
-                contentAlignment = Alignment.Center,
+                    .background(brush = Brush.linearGradient(gradient)),
+                contentAlignment = Alignment.Center
             ) {
-                Icon(icon, null, tint = color, modifier = Modifier.size(20.dp))
+                Icon(icon, null, tint = Color.White, modifier = Modifier.size(22.dp))
             }
-            Spacer(Modifier.height(8.dp))
-            Text(title, fontWeight = FontWeight.Medium, fontSize = 13.sp)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp)
-        }
-    }
-}
-
-@Composable
-fun CapabilityBadge(title: String, icon: ImageVector, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(icon, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(6.dp))
-            Text(title, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(10.dp))
+            Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3))
         }
     }
 }

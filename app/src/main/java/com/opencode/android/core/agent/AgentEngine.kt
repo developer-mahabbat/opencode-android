@@ -8,6 +8,7 @@ import com.opencode.android.core.tool.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.serialization.json.*
+import timber.log.Timber
 import java.util.UUID
 
 enum class AgentMode { PRIMARY, SUBAGENT, HIDDEN }
@@ -28,16 +29,14 @@ data class AgentDefinition(
 object AgentRegistry {
     val agents = mapOf(
         "build" to AgentDefinition(
-            id = "build",
-            name = "Build",
+            id = "build", name = "Build",
             description = "Full access agent with all tools",
             mode = AgentMode.PRIMARY,
             systemPrompt = com.opencode.android.core.config.DEFAULT_SYSTEM_PROMPT,
             color = "#90CAF9",
         ),
         "plan" to AgentDefinition(
-            id = "plan",
-            name = "Plan",
+            id = "plan", name = "Plan",
             description = "Read-only analysis and planning",
             mode = AgentMode.PRIMARY,
             systemPrompt = com.opencode.android.core.config.PLAN_SYSTEM_PROMPT,
@@ -45,32 +44,28 @@ object AgentRegistry {
             color = "#A5D6A7",
         ),
         "coder" to AgentDefinition(
-            id = "coder",
-            name = "Coder",
+            id = "coder", name = "Coder",
             description = "Code specialist with deep analysis",
             mode = AgentMode.PRIMARY,
             systemPrompt = "You are an expert coder. Focus on writing clean, efficient, well-documented code. Always explain your approach before implementing.",
             color = "#CE93D8",
         ),
         "researcher" to AgentDefinition(
-            id = "researcher",
-            name = "Researcher",
+            id = "researcher", name = "Researcher",
             description = "Web search and documentation specialist",
             mode = AgentMode.PRIMARY,
             systemPrompt = "You are a research specialist. Use web search to find documentation, examples, and best practices. Always cite your sources.",
             color = "#FFB74D",
         ),
         "general" to AgentDefinition(
-            id = "general",
-            name = "General",
+            id = "general", name = "General",
             description = "General-purpose sub-agent",
             mode = AgentMode.SUBAGENT,
             systemPrompt = "You are a helpful assistant. Complete the given task using available tools.",
             color = "#80CBC4",
         ),
         "explore" to AgentDefinition(
-            id = "explore",
-            name = "Explore",
+            id = "explore", name = "Explore",
             description = "Fast codebase exploration",
             mode = AgentMode.SUBAGENT,
             systemPrompt = "You are a fast codebase explorer. Quickly find and report relevant files and code. Be concise.",
@@ -78,8 +73,7 @@ object AgentRegistry {
             color = "#F48FB1",
         ),
         "reviewer" to AgentDefinition(
-            id = "reviewer",
-            name = "Reviewer",
+            id = "reviewer", name = "Reviewer",
             description = "Code review specialist",
             mode = AgentMode.SUBAGENT,
             systemPrompt = "You are a code reviewer. Analyze code for bugs, security issues, performance problems, and style violations. Be specific about line numbers and provide fix suggestions.",
@@ -87,8 +81,7 @@ object AgentRegistry {
             color = "#EF9A9A",
         ),
         "title" to AgentDefinition(
-            id = "title",
-            name = "Title",
+            id = "title", name = "Title",
             description = "Session title generator",
             mode = AgentMode.HIDDEN,
             systemPrompt = "Generate a short, descriptive title (max 50 chars) for this conversation. Only output the title, nothing else.",
@@ -127,6 +120,9 @@ class AgentEngine(
         register(WebFetchTool())
     }
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private var processingJob: Job? = null
+
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
@@ -142,24 +138,31 @@ class AgentEngine(
     private val _activeTools = MutableStateFlow<List<String>>(emptyList())
     val activeTools: StateFlow<List<String>> = _activeTools.asStateFlow()
 
-    private var job: Job? = null
+    private val _errorMessage = MutableStateFlow<String?>(null)
+    val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     fun switchAgent(agentId: String) {
         _currentAgent.value = agentId
     }
 
     fun processMessage(sessionId: String, userMessage: String) {
-        job?.cancel()
-        job = CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+        if (_isProcessing.value) return
+        processingJob?.cancel()
+
+        processingJob = scope.launch {
             _isProcessing.value = true
             _currentOutput.value = ""
             _activeTools.value = emptyList()
+            _errorMessage.value = null
 
             try {
                 val config = configManager.config.value
                 val provider = config.providers[config.defaultProvider]
                     ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
-                val session = sessionManager.getSession(sessionId) ?: return@launch
+                val session = sessionManager.getSession(sessionId) ?: run {
+                    _errorMessage.value = "Session not found"
+                    return@launch
+                }
                 val agentDef = AgentRegistry.getAgent(_currentAgent.value)
 
                 sessionManager.addMessage(sessionId, "user", userMessage)
@@ -172,32 +175,38 @@ class AgentEngine(
                     val responseBuilder = StringBuilder()
                     val toolCallsList = mutableListOf<PendingToolCall>()
 
-                    llmClient.streamChat(
-                        provider = provider,
-                        messages = conversationHistory,
-                        model = config.defaultModel,
-                        maxTokens = config.maxTokens,
-                        temperature = agentDef.temperature,
-                    ).collect { event ->
-                        when (event) {
-                            is StreamEvent.Token -> {
-                                responseBuilder.append(event.text)
-                                _currentOutput.value = responseBuilder.toString()
-                            }
-                            is StreamEvent.ToolCall -> {
-                                if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
-                                    if (event.name !in agentDef.deniedTools) {
-                                        toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
-                                        _activeTools.value = _activeTools.value + event.name
+                    try {
+                        llmClient.streamChat(
+                            provider = provider,
+                            messages = conversationHistory,
+                            model = config.defaultModel,
+                            maxTokens = config.maxTokens,
+                            temperature = agentDef.temperature,
+                        ).collect { event ->
+                            when (event) {
+                                is StreamEvent.Token -> {
+                                    responseBuilder.append(event.text)
+                                    _currentOutput.value = responseBuilder.toString()
+                                }
+                                is StreamEvent.ToolCall -> {
+                                    if (agentDef.allowedTools.isEmpty() || event.name in agentDef.allowedTools) {
+                                        if (event.name !in agentDef.deniedTools) {
+                                            toolCallsList.add(PendingToolCall(event.id, event.name, event.arguments))
+                                            _activeTools.value = _activeTools.value + event.name
+                                        }
                                     }
                                 }
+                                is StreamEvent.Error -> {
+                                    _errorMessage.value = event.message
+                                    _currentOutput.value = "Error: ${event.message}"
+                                }
+                                else -> {}
                             }
-                            is StreamEvent.Error -> {
-                                sessionManager.addMessage(sessionId, "assistant", "Error: ${event.message}")
-                                _currentOutput.value = "Error: ${event.message}"
-                            }
-                            else -> {}
                         }
+                    } catch (e: Exception) {
+                        Timber.e(e, "Stream collection failed")
+                        _errorMessage.value = e.message ?: "Connection failed"
+                        _currentOutput.value = "Error: ${e.message}"
                     }
 
                     val assistantContent = responseBuilder.toString()
@@ -232,51 +241,17 @@ class AgentEngine(
                     _currentOutput.value = ""
                     break
                 }
+            } catch (e: CancellationException) {
+                Timber.d("Processing cancelled")
             } catch (e: Exception) {
-                if (e !is CancellationException) {
-                    _currentOutput.value = "Error: ${e.message}"
-                }
+                Timber.e(e, "Processing failed")
+                _errorMessage.value = e.message ?: "Unknown error"
+                _currentOutput.value = "Error: ${e.message}"
             } finally {
                 _isProcessing.value = false
                 _activeTools.value = emptyList()
             }
         }
-    }
-
-    suspend fun spawnSubAgent(
-        parentSessionId: String,
-        agentId: String,
-        task: String,
-        workspace: String,
-    ): String {
-        val agentDef = AgentRegistry.getAgent(agentId)
-        val childSessionId = sessionManager.createSession(
-            title = "Sub-agent: ${agentDef.name}",
-            workspacePath = workspace,
-            modelId = configManager.config.value.defaultModel,
-            providerId = configManager.config.value.defaultProvider,
-        ).id
-
-        val provider = configManager.config.value.let { config ->
-            config.providers[config.defaultProvider]
-                ?: ProviderConfig(id = "zen", name = "Zen", baseUrl = "https://opencode.ai/zen/v1")
-        }
-
-        sessionManager.addMessage(childSessionId, "user", task)
-
-        val messages = buildConversationHistory(childSessionId, agentDef.systemPrompt)
-        val responseBuilder = StringBuilder()
-
-        llmClient.streamChat(provider, messages).collect { event ->
-            when (event) {
-                is StreamEvent.Token -> responseBuilder.append(event.text)
-                else -> {}
-            }
-        }
-
-        val result = responseBuilder.toString()
-        sessionManager.addMessage(childSessionId, "assistant", result)
-        return result
     }
 
     private fun buildConversationHistory(sessionId: String, systemPrompt: String): List<ChatMessage> {
@@ -293,11 +268,15 @@ class AgentEngine(
     }
 
     fun cancel() {
-        job?.cancel()
-        job = null
+        processingJob?.cancel()
+        processingJob = null
         _isProcessing.value = false
         _currentOutput.value = ""
         _activeTools.value = emptyList()
+    }
+
+    fun clearError() {
+        _errorMessage.value = null
     }
 }
 

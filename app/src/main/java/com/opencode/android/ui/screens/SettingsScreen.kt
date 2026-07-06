@@ -1,85 +1,143 @@
 package com.opencode.android.ui.screens
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.opencode.android.core.config.ConfigManager
-import com.opencode.android.core.config.ProviderConfig
+
+private val GradientStart = Color(0xFF667eea)
+private val GradientEnd = Color(0xFF764ba2)
+private val SurfaceBg = Color(0xFF0D1117)
+private val CardBg = Color(0xFF161B22)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(config: ConfigManager, onBack: () -> Unit) {
+fun SettingsScreen(
+    config: ConfigManager,
+    onBack: () -> Unit,
+) {
     val cfg by config.config.collectAsState()
-    var providerName by remember { mutableStateOf(cfg.defaultProvider) }
-    var apiKey by remember { mutableStateOf(cfg.providers[cfg.defaultProvider]?.apiKey ?: "") }
-    var baseUrl by remember { mutableStateOf(cfg.providers[cfg.defaultProvider]?.baseUrl ?: "") }
-    var model by remember { mutableStateOf(cfg.defaultModel) }
-    var systemPrompt by remember { mutableStateOf(cfg.systemPrompt) }
-    var maxTokens by remember { mutableStateOf(cfg.maxTokens.toString()) }
-    var temperature by remember { mutableStateOf(cfg.temperature.toString()) }
+    var tempUrl by remember(cfg.baseUrl) { mutableStateOf(cfg.baseUrl) }
+    var tempKey by remember(cfg.apiKey) { mutableStateOf(cfg.apiKey) }
+    var tempModel by remember(cfg.modelName) { mutableStateOf(cfg.modelName) }
+    var tempMaxTokens by remember(cfg.maxTokens.toString()) { mutableStateOf(cfg.maxTokens.toString()) }
+    var tempProvider by remember(cfg.provider) { mutableStateOf(cfg.provider) }
+    var showSaveSuccess by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Settings", fontWeight = FontWeight.SemiBold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+            CenterAlignedTopAppBar(
+                title = { Text("Settings", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = Color(0xFFE6EDF3))
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        val maxTokens = tempMaxTokens.toIntOrNull() ?: cfg.maxTokens
+                        config.updateConfig(
+                            cfg.copy(
+                                baseUrl = tempUrl.trim(),
+                                apiKey = tempKey.trim(),
+                                modelName = tempModel.trim(),
+                                maxTokens = maxTokens.coerceIn(100, 16000),
+                                provider = tempProvider,
+                            )
+                        )
+                        showSaveSuccess = true
+                    }) {
+                        Icon(Icons.Default.Check, "Save", tint = GradientStart)
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color(0xFF161B22))
             )
-        }
+        },
+        containerColor = SurfaceBg,
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.padding(padding),
-            contentPadding = PaddingValues(16.dp),
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .verticalScroll(scrollState)
+                .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            // Model Selection
-            item {
-                SettingsSection("Model", Icons.Default.Memory) {
-                    Text("Available Models", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    Spacer(Modifier.height(8.dp))
-                    config.getAvailableModels().forEach { modelInfo ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor = if (cfg.defaultModel == modelInfo.id)
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                            ),
-                            onClick = { config.update { c -> c.copy(defaultModel = modelInfo.id) } },
+            // Save success toast
+            if (showSaveSuccess) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = Color(0xFF11998e).copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(12.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF38ef7d), modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text("Settings saved", fontWeight = FontWeight.Medium, color = Color(0xFF38ef7d))
+                    }
+                }
+            }
+
+            // Provider selector
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("Provider", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
+                    Spacer(Modifier.height(12.dp))
+                    listOf(
+                        "Zen (OpenCode Free)" to "zen",
+                        "OpenRouter" to "openrouter",
+                        "Custom" to "custom"
+                    ).forEach { (label, value) ->
+                        val isSelected = tempProvider == value
+                        Surface(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(if (isSelected) GradientStart.copy(alpha = 0.1f) else Color.Transparent),
+                            color = Color.Transparent,
                         ) {
                             Row(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(modelInfo.name, fontWeight = FontWeight.Medium)
-                                    Text(modelInfo.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        modelInfo.capabilities.forEach { cap ->
-                                            AssistChip(
-                                                onClick = {},
-                                                label = { Text(cap, fontSize = 10.sp) },
-                                                modifier = Modifier.height(24.dp),
-                                                shape = RoundedCornerShape(12.dp),
-                                            )
-                                        }
+                                RadioButton(
+                                    selected = isSelected,
+                                    onClick = { tempProvider = value },
+                                    colors = RadioButtonDefaults.colors(selectedColor = GradientStart),
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(label, color = Color(0xFFE6EDF3), fontSize = 14.sp)
+                                    if (value == "zen") {
+                                        Text(
+                                            "Free models, no API key needed",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFF8B949E)
+                                        )
                                     }
-                                }
-                                if (cfg.defaultModel == modelInfo.id) {
-                                    Icon(Icons.Default.CheckCircle, null, tint = MaterialTheme.colorScheme.primary)
                                 }
                             }
                         }
@@ -87,120 +145,146 @@ fun SettingsScreen(config: ConfigManager, onBack: () -> Unit) {
                 }
             }
 
-            // Provider Configuration
-            item {
-                SettingsSection("Provider", Icons.Default.Cloud) {
+            // API settings
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = CardBg),
+                shape = RoundedCornerShape(16.dp),
+            ) {
+                Column(modifier = Modifier.padding(20.dp)) {
+                    Text("API Settings", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
+                    Spacer(Modifier.height(16.dp))
+
+                    // Base URL
                     OutlinedTextField(
-                        value = providerName,
-                        onValueChange = { providerName = it },
-                        label = { Text("Provider ID") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = apiKey,
-                        onValueChange = { apiKey = it },
-                        label = { Text("API Key (optional for free models)") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = baseUrl,
-                        onValueChange = { baseUrl = it },
+                        value = tempUrl,
+                        onValueChange = { tempUrl = it },
                         label = { Text("Base URL") },
                         modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GradientStart,
+                            unfocusedBorderColor = Color(0xFF30363D),
+                            focusedContainerColor = Color(0xFF0D1117),
+                            unfocusedContainerColor = Color(0xFF0D1117),
+                            focusedTextColor = Color(0xFFE6EDF3),
+                            unfocusedTextColor = Color(0xFFE6EDF3),
+                            focusedLabelColor = GradientStart,
+                            unfocusedLabelColor = Color(0xFF8B949E),
+                        ),
                         shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
                     )
-                }
-            }
+                    Spacer(Modifier.height(12.dp))
 
-            // Generation Settings
-            item {
-                SettingsSection("Generation", Icons.Default.Tune) {
+                    // API Key (only for non-zen)
+                    if (tempProvider != "zen") {
+                        OutlinedTextField(
+                            value = tempKey,
+                            onValueChange = { tempKey = it },
+                            label = { Text("API Key") },
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = GradientStart,
+                                unfocusedBorderColor = Color(0xFF30363D),
+                                focusedContainerColor = Color(0xFF0D1117),
+                                unfocusedContainerColor = Color(0xFF0D1117),
+                                focusedTextColor = Color(0xFFE6EDF3),
+                                unfocusedTextColor = Color(0xFFE6EDF3),
+                                focusedLabelColor = GradientStart,
+                                unfocusedLabelColor = Color(0xFF8B949E),
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                    }
+
+                    // Model name
                     OutlinedTextField(
-                        value = maxTokens,
-                        onValueChange = { maxTokens = it },
+                        value = tempModel,
+                        onValueChange = { tempModel = it },
+                        label = { Text("Model") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GradientStart,
+                            unfocusedBorderColor = Color(0xFF30363D),
+                            focusedContainerColor = Color(0xFF0D1117),
+                            unfocusedContainerColor = Color(0xFF0D1117),
+                            focusedTextColor = Color(0xFFE6EDF3),
+                            unfocusedTextColor = Color(0xFFE6EDF3),
+                            focusedLabelColor = GradientStart,
+                            unfocusedLabelColor = Color(0xFF8B949E),
+                        ),
+                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
+                    )
+                    Spacer(Modifier.height(12.dp))
+
+                    // Max tokens
+                    OutlinedTextField(
+                        value = tempMaxTokens,
+                        onValueChange = { tempMaxTokens = it.filter { c -> c.isDigit() } },
                         label = { Text("Max Tokens") },
                         modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = GradientStart,
+                            unfocusedBorderColor = Color(0xFF30363D),
+                            focusedContainerColor = Color(0xFF0D1117),
+                            unfocusedContainerColor = Color(0xFF0D1117),
+                            focusedTextColor = Color(0xFFE6EDF3),
+                            unfocusedTextColor = Color(0xFFE6EDF3),
+                            focusedLabelColor = GradientStart,
+                            unfocusedLabelColor = Color(0xFF8B949E),
+                        ),
                         shape = RoundedCornerShape(12.dp),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = temperature,
-                        onValueChange = { temperature = it },
-                        label = { Text("Temperature") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                }
-            }
-
-            // System Prompt
-            item {
-                SettingsSection("System Prompt", Icons.Default.Description) {
-                    OutlinedTextField(
-                        value = systemPrompt,
-                        onValueChange = { systemPrompt = it },
-                        label = { Text("System Prompt") },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 150.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        singleLine = true,
                     )
                 }
             }
 
-            // Save button
-            item {
-                Button(
-                    onClick = {
-                        val id = providerName.lowercase().trim()
-                        config.update { c ->
-                            c.copy(
-                                defaultProvider = id,
-                                defaultModel = model,
-                                systemPrompt = systemPrompt,
-                                maxTokens = maxTokens.toIntOrNull() ?: 8192,
-                                temperature = temperature.toDoubleOrNull() ?: 0.7,
-                                providers = c.providers + (id to ProviderConfig(
-                                    id = id,
-                                    name = providerName,
-                                    apiKey = apiKey,
-                                    baseUrl = baseUrl,
-                                    defaultModel = model,
-                                ))
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(12.dp),
+            // Available models card
+            if (tempProvider == "zen") {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = CardBg),
+                    shape = RoundedCornerShape(16.dp),
                 ) {
-                    Icon(Icons.Default.Save, null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Save Settings", fontWeight = FontWeight.Medium)
+                    Column(modifier = Modifier.padding(20.dp)) {
+                        Text("Available Free Models", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3))
+                        Spacer(Modifier.height(8.dp))
+                        listOf(
+                            "deepseek-v4-flash-free" to "Fast general model",
+                            "mimo-v2.5-free" to "Advanced coding model",
+                            "north-mini-code-free" to "Lightweight code model",
+                            "nemotron-3-ultra-free" to "NVIDIA reasoning model",
+                            "big-pickle" to "Top-tier coding model"
+                        ).forEach { (model, desc) ->
+                            val isSelected = tempModel == model
+                            Surface(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isSelected) GradientStart.copy(alpha = 0.1f) else Color.Transparent)
+                                    .padding(10.dp),
+                                color = Color.Transparent,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RadioButton(
+                                        selected = isSelected,
+                                        onClick = { tempModel = model },
+                                        colors = RadioButtonDefaults.colors(selectedColor = GradientStart),
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text(model, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFFE6EDF3))
+                                        Text(desc, style = MaterialTheme.typography.bodySmall, color = Color(0xFF8B949E))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-
-            item { Spacer(Modifier.height(32.dp)) }
-        }
-    }
-}
-
-@Composable
-fun SettingsSection(title: String, icon: ImageVector, content: @Composable ColumnScope.() -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(title, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
-            }
-            Spacer(Modifier.height(12.dp))
-            content()
         }
     }
 }

@@ -1,14 +1,16 @@
 package com.opencode.android.ui.screens
 
+import android.app.Activity
+import android.content.Intent
 import android.net.Uri
-import android.os.Environment
-import android.provider.DocumentsContract
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,11 +18,25 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.opencode.android.core.config.ConfigManager
+import com.opencode.android.core.filesystem.FileNode
 import com.opencode.android.core.filesystem.ProjectScanner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+private val GradientStart = Color(0xFF667eea)
+private val GradientEnd = Color(0xFF764ba2)
+private val SurfaceBg = Color(0xFF0D1117)
+private val CardBg = Color(0xFF161B22)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -30,71 +46,123 @@ fun ExplorerScreen(
     onOpenFile: (String) -> Unit,
     onBack: () -> Unit,
 ) {
-    val cfg by config.config.collectAsState()
-    var currentPath by remember { mutableStateOf(cfg.workspacePath) }
-    var files by remember { mutableStateOf(listOf<com.opencode.android.core.filesystem.FileNode>()) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val cfg by config.config.collectAsState()
+    var root by remember { mutableStateOf<FileNode?>(null) }
+    var isLoading by remember { mutableStateOf(false) }
+    var selectedDir by remember { mutableStateOf(cfg.workspacePath.ifEmpty { null }) }
+    var expandedDirs by remember { mutableStateOf(setOf<String>()) }
 
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
-        uri?.let {
-            val path = getRealPathFromUri(context, it)
-            if (path.isNotEmpty()) {
-                config.update { c -> c.copy(workspacePath = path) }
-                currentPath = path
-            }
+    // Load on mount or when selectedDir changes
+    LaunchedEffect(selectedDir) {
+        if (selectedDir != null) {
+            isLoading = true
+            root = withContext(Dispatchers.IO) { scanner.scan(selectedDir!!) }
+            isLoading = false
         }
     }
 
-    LaunchedEffect(currentPath) {
-        if (currentPath.isNotEmpty()) {
-            val info = scanner.scan(currentPath)
-            files = info.structure
+    // Folder picker
+    val folderLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val uri: Uri? = result.data?.data
+            uri?.let {
+                context.contentResolver.takePersistableUriPermission(
+                    it, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                )
+                val path = uriToPath(it, context)
+                if (path.isNotEmpty()) {
+                    selectedDir = path
+                    config.updateConfig(config.config.value.copy(workspacePath = path))
+                }
+            }
         }
     }
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Explorer", fontWeight = FontWeight.SemiBold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") } },
-                actions = {
-                    IconButton(onClick = { launcher.launch(null) }) {
-                        Icon(Icons.Default.FolderOpen, "Open Folder")
+            CenterAlignedTopAppBar(
+                title = { Text("File Explorer", fontWeight = FontWeight.SemiBold, color = Color(0xFFE6EDF3)) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, "Back", tint = Color(0xFFE6EDF3))
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
+                actions = {
+                    IconButton(onClick = {
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        }
+                        folderLauncher.launch(intent)
+                    }) {
+                        Icon(Icons.Default.FolderOpen, "Open Folder", tint = GradientStart)
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Color(0xFF161B22))
             )
-        }
+        },
+        containerColor = SurfaceBg,
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (currentPath.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Default.FolderOpen, null,
-                            modifier = Modifier.size(64.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text("No workspace selected", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(8.dp))
-                        Button(onClick = { launcher.launch(null) }) { Text("Open Folder") }
+        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+            when {
+                selectedDir == null -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Box(
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(CircleShape)
+                                    .background(Brush.linearGradient(listOf(GradientStart, GradientEnd))),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.FolderOpen, null, tint = Color.White, modifier = Modifier.size(32.dp))
+                            }
+                            Spacer(Modifier.height(20.dp))
+                            Text("No Workspace Selected", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFFE6EDF3))
+                            Spacer(Modifier.height(8.dp))
+                            Text("Select a folder to explore", color = Color(0xFF8B949E))
+                            Spacer(Modifier.height(24.dp))
+                            Button(
+                                onClick = {
+                                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                                        flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                                    }
+                                    folderLauncher.launch(intent)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = GradientStart),
+                                shape = RoundedCornerShape(12.dp),
+                            ) {
+                                Icon(Icons.Default.FolderOpen, null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Open Folder")
+                            }
+                        }
                     }
                 }
-            } else {
-                // Path breadcrumb
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)) {
-                    Text(
-                        currentPath,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    )
+                isLoading -> {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = GradientStart)
+                    }
                 }
-
-                LazyColumn(contentPadding = PaddingValues(8.dp)) {
-                    items(files) { node ->
-                        FileNodeItem(node, 0, onOpenFile)
+                root != null -> {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        items(root!!.children) { node ->
+                            FileNodeItem(
+                                node = node,
+                                expandedDirs = expandedDirs,
+                                onToggleExpand = { path ->
+                                    expandedDirs = if (expandedDirs.contains(path)) expandedDirs - path else expandedDirs + path
+                                },
+                                onOpenFile = onOpenFile,
+                            )
+                        }
                     }
                 }
             }
@@ -103,98 +171,103 @@ fun ExplorerScreen(
 }
 
 @Composable
-fun FileNodeItem(
-    node: com.opencode.android.core.filesystem.FileNode,
-    depth: Int,
+private fun FileNodeItem(
+    node: FileNode,
+    expandedDirs: Set<String>,
+    onToggleExpand: (String) -> Unit,
     onOpenFile: (String) -> Unit,
+    depth: Int = 0,
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    val isExpanded = expandedDirs.contains(node.path)
+    val isDir = node.type == "directory"
 
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = (depth * 16).dp, top = 2.dp, bottom = 2.dp)
+            .clip(RoundedCornerShape(8.dp))
             .clickable {
-                if (node.isDirectory) expanded = !expanded
-                else onOpenFile(node.path)
-            },
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                if (isDir) onToggleExpand(node.path) else onOpenFile(node.path)
+            }
+            .padding(start = (depth * 16 + 8).dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (node.isDirectory) {
-                Icon(
-                    if (expanded) Icons.Default.ExpandMore else Icons.Default.ChevronRight,
-                    null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    Icons.Default.Folder, null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            } else {
-                Spacer(Modifier.width(22.dp))
-                Icon(
-                    getFileIcon(node.name), null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Text(node.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-            if (!node.isDirectory) {
-                Text(
-                    formatSize(node.size),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+        if (isDir) {
+            Icon(
+                if (isExpanded) Icons.Default.KeyboardArrowDown else Icons.Default.KeyboardArrowRight,
+                null,
+                tint = Color(0xFF8B949E),
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                if (isExpanded) Icons.Default.FolderOpen else Icons.Default.Folder,
+                null,
+                tint = GradientStart,
+                modifier = Modifier.size(20.dp)
+            )
+        } else {
+            Spacer(Modifier.width(22.dp))
+            Icon(
+                when (node.type) {
+                    "kotlin" -> Icons.Default.Code
+                    "json" -> Icons.Default.DataObject
+                    "xml" -> Icons.Default.FilePresent
+                    "gradle" -> Icons.Default.Build
+                    "git" -> Icons.Default.History
+                    else -> Icons.Default.InsertDriveFile
+                },
+                null,
+                tint = when (node.type) {
+                    "kotlin" -> Color(0xFFA97BFF)
+                    "json" -> Color(0xFF38ef7d)
+                    "xml" -> Color(0xFFf7b733)
+                    "gradle" -> Color(0xFF11998e)
+                    else -> Color(0xFF8B949E)
+                },
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(
+            node.name,
+            fontSize = 14.sp,
+            color = if (isDir) Color(0xFFE6EDF3) else Color(0xFFC9D1D9),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        if (node.size != null) {
+            Text(
+                formatSize(node.size),
+                fontSize = 11.sp,
+                color = Color(0xFF484F58),
+            )
         }
     }
 
-    if (expanded && node.isDirectory) {
+    if (isExpanded && isDir) {
         node.children.forEach { child ->
-            FileNodeItem(child, depth + 1, onOpenFile)
+            FileNodeItem(
+                node = child,
+                expandedDirs = expandedDirs,
+                onToggleExpand = onToggleExpand,
+                onOpenFile = onOpenFile,
+                depth = depth + 1,
+            )
         }
     }
-}
-
-private fun getFileIcon(name: String) = when {
-    name.endsWith(".kt") || name.endsWith(".kts") -> Icons.Default.Code
-    name.endsWith(".java") -> Icons.Default.Code
-    name.endsWith(".py") -> Icons.Default.Code
-    name.endsWith(".js") || name.endsWith(".ts") -> Icons.Default.Code
-    name.endsWith(".json") || name.endsWith(".xml") -> Icons.Default.DataObject
-    name.endsWith(".md") -> Icons.Default.Description
-    name.endsWith(".gradle") || name.endsWith(".gradle.kts") -> Icons.Default.Build
-    else -> Icons.Default.InsertDriveFile
 }
 
 private fun formatSize(bytes: Long): String = when {
     bytes < 1024 -> "${bytes}B"
-    bytes < 1048576 -> "${bytes / 1024}KB"
-    else -> "${bytes / 1048576}MB"
+    bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+    else -> "${"%.1f".format(bytes / (1024.0 * 1024))}MB"
 }
 
-private fun getRealPathFromUri(context: android.content.Context, uri: Uri): String {
-    val docId = DocumentsContract.getTreeDocumentId(uri)
-    if (docId.isNotEmpty()) {
-        val split = docId.split(":")
-        if (split.size >= 2) {
-            val type = split[0]
-            val path = split.subList(1, split.size).joinToString(":")
-            return when (type) {
-                "primary" -> "${Environment.getExternalStorageDirectory()}/$path"
-                "home" -> "${Environment.getExternalStorageDirectory()}/$path"
-                else -> "/storage/emulated/0/$path"
-            }
-        }
-    }
-    return uri.path ?: ""
+private fun uriToPath(uri: Uri, context: android.content.Context): String {
+    val docId = uri.lastPathSegment ?: return ""
+    // SAF DocumentUri: /tree/primary:path or /tree/documentId:path
+    val path = docId.substringAfter(":", "")
+    val volume = docId.substringBefore(":", "")
+    return "/storage/$volume/$path"
 }
